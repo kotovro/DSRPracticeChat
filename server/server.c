@@ -1,79 +1,139 @@
 #include <libwebsockets.h>
 #include <string.h>
 #include <stdio.h>
+#include "../common/settings.h"
+#include "../common/commons.h"
+#include "client_login.h"
 
-#define MAX_MSG_LEN 512
-#define MAX_CLIENTS 100
-
-// Структура для хранения данных каждого подключенного клиента
-struct client_data {
-    struct lws *wsi;
-};
-
-// Сессионные данные самого сервера для рассылки сообщений
+// Хранилище сервера держит указатели на структуры данных клиентов
 struct server_storage {
-    struct lws *clients[MAX_CLIENTS];
+    struct client_data *clients[MAX_CLIENTS];
     int client_count;
-    char buffer[LWS_PRE + MAX_MSG_LEN]; // Буфер со специальным отступом lws
+    char buffer[LWS_PRE + MAX_NAME_LEN + MAX_MSG_LEN + 4]; // Запас под "Имя: Текст"
     size_t msg_len;
 };
 
 static struct server_storage chat_server;
 
+
+void queue_message_for_client(struct client_data *client, const char *text, size_t len) {
+    if (!client || client->queue_count >= MAX_QUEUE) return;
+
+    if (len > MAX_MSG_LEN) len = MAX_MSG_LEN;
+
+    // Записываем сообщение в текущий свободный слот очереди с отступом LWS_PRE
+    int slot = client->queue_count;
+    memcpy(&client->queue[slot].data[LWS_PRE], text, len);
+    client->queue[slot].len = len;
+    client->queue_count++;
+
+    // Просим lws вызвать событие WRITEABLE для этого клиента
+    lws_callback_on_writable(client->wsi);
+}
+
 // Функция для отправки сообщения всем активным клиентам
-void broadcast_message() {
+void broadcast_message(const char *message, size_t len, struct client_data *exclude) {
+    // Копируем результат в буфер рассылки с отступом LWS_PRE
+    memcpy(&chat_server.buffer[LWS_PRE], message, len);
+    chat_server.msg_len = len;
+
     for (int i = 0; i < chat_server.client_count; i++) {
-        if (chat_server.clients[i]) {
-            // Запрашиваем у libwebsockets вызов события LWS_CALLBACK_SERVER_WRITEABLE
-            lws_callback_on_writable(chat_server.clients[i]);
+        if (chat_server.clients[i] && (exclude == NULL || chat_server.clients[i] != exclude)) {
+            queue_message_for_client(chat_server.clients[i], message, len);
         }
     }
 }
+
+void direct_message(struct client_data *recipient, const char *message, size_t len) { 
+    // Копируем результат в буфер рассылки с отступом LWS_PRE
+    memcpy(&chat_server.buffer[LWS_PRE], message, len);
+    chat_server.msg_len = len;
+    queue_message_for_client(recipient, message, len);
+}
+
+
+
 
 // Главный обработчик событий (Callback) для протокола чата
 static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                          void *user, void *in, size_t len) {
     
+    // Приводим void *user к нашему типу сессии
     struct client_data *vhd = (struct client_data *)user;
 
     switch (reason) {
         
         // 1. Клиент успешно подключился
-        case LWS_CALLBACK_ESTABLISHED:
+         case LWS_CALLBACK_ESTABLISHED:
             if (chat_server.client_count >= MAX_CLIENTS) {
-                return -1; // Отклоняем подключение, если превышен лимит
+                return -1;
             }
             vhd->wsi = wsi;
-            chat_server.clients[chat_server.client_count++] = wsi;
-            printf("[Чат] Новый клиент подключен. Всего: %d\n", chat_server.client_count);
+            // Присваиваем временное имя, пока клиент не прислал свое
+            snprintf(vhd->username, MAX_NAME_LEN, "User_%d", chat_server.client_count + 1);
+            
+            // Сохраняем указатель на сессию в общий список сервера
+            chat_server.clients[chat_server.client_count++] = vhd;
             break;
+
 
         // 2. Получено сообщение от клиента
         case LWS_CALLBACK_RECEIVE:
-            if (len > MAX_MSG_LEN) len = MAX_MSG_LEN;
+            // Проверяем: если сообщение начинается со спец-команды "/login ", меняем ник
+            if (!vhd->is_logged_in) {
+                if (login((char *)in, len, vhd)) {
+                    char welcome_msg[MAX_NAME_LEN + strlen(WELCOME_MESSAGE) + 1];
+                    int welcome_len = snprintf(welcome_msg, sizeof(welcome_msg), 
+                                                    WELCOME_MESSAGE, vhd->username);
+                    direct_message(vhd, welcome_msg, welcome_len); // Отправляем приветственное сообщение только этому клиенту
+                    
+                    char join_msg[MAX_NAME_LEN + strlen(JOIN_MESSAGE) + 1];
+                    int join_len = snprintf(join_msg, sizeof(join_msg), 
+                                                    JOIN_MESSAGE, vhd->username);
+                    broadcast_message(join_msg, join_len, vhd); // Рассылаем всем клиентам сообщение о входе нового пользователя
+                }
+                break;// Не рассылаем эту команду в чат
+            }
+
+            // Для обычного сообщения склеиваем строку: "Имя: Текст"
+            char formatted_msg[MAX_NAME_LEN + MAX_MSG_LEN + 3];
+            int formatted_len = snprintf(formatted_msg, sizeof(formatted_msg), 
+                                         "%s: %.*s", vhd->username, (int)len, (char *)in);
             
-            // Копируем сообщение в буфер, оставляя LWS_PRE байт в начале (требование libwebsockets)
-            memcpy(&chat_server.buffer[LWS_PRE], in, len);
-            chat_server.msg_len = len;
-            
-            printf("[Чат] Получено сообщение: %.*s\n", (int)len, (char *)in);
-            
-            // Запускаем рассылку всем участникам
-            broadcast_message();
+            printf("[Чат] Получено сообщение: %.*s\n", (int)formatted_len, (char *)formatted_msg);
+
+            // Рассылаем всем клиентам, включая отправителя
+            broadcast_message(formatted_msg, formatted_len, NULL);
             break;
+       
 
         // 3. Сокет готов к отправке данных (вызывается после lws_callback_on_writable)
         case LWS_CALLBACK_SERVER_WRITEABLE:
-            if (chat_server.msg_len > 0) {
-                lws_write(wsi, (unsigned char *)&chat_server.buffer[LWS_PRE], 
-                          chat_server.msg_len, LWS_WRITE_TEXT);
+               if (vhd->queue_count > 0) {
+                // Отправляем самое первое сообщение (индекс 0)
+                int amt = lws_write(wsi, (unsigned char *)&vhd->queue[0].data[LWS_PRE], 
+                                    vhd->queue[0].len, LWS_WRITE_TEXT);
+                
+                if (amt < 0) return -1; // Ошибка отправки, закрываем соединение
+
+                // Сдвигаем очередь влево (удаляем отправленное сообщение)
+                if (vhd->queue_count > 1) {
+                    vhd->queue[0] = vhd->queue[1];
+                }
+                vhd->queue_count--;
+
+                // ВАЖНО: Если в очереди ОСТАЛИСЬ сообщения, просим lws вызвать 
+                // событие WRITEABLE снова на следующем итерации цикла event loop!
+                if (vhd->queue_count > 0) {
+                    lws_callback_on_writable(wsi);
+                }
             }
             break;
 
         // 4. Клиент отключился
         case LWS_CALLBACK_CLOSED:
             for (int i = 0; i < chat_server.client_count; i++) {
-                if (chat_server.clients[i] == wsi) {
+                if (chat_server.clients[i]->wsi == wsi) {
                     // Удаляем клиента из списка смещением массива
                     chat_server.clients[i] = chat_server.clients[chat_server.client_count - 1];
                     chat_server.client_count--;
@@ -107,7 +167,7 @@ int main(int argc, char **argv) {
     struct lws_context_creation_info info;
     struct lws_context *context;
     int opt;
-    int port = 8080; // Порт по умолчанию
+    int port = SERVER_PORT; // Порт по умолчанию
     
     while ((opt = getopt(argc, argv, "p:h")) != -1) {
         switch (opt) {

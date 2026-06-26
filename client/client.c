@@ -4,9 +4,10 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include "../common/settings.h"
 
-#define MAX_MSG_LEN 512
-
+static bool is_logged_in = false; // Флаг для проверки, вошел ли пользователь в чат
 // Глобальные переменные для управления состоянием
 static struct lws *web_socket = NULL;
 static int force_exit = 0;
@@ -54,7 +55,8 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
         // 1. Успешное подключение к серверу
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
             web_socket = wsi;
-            printf("[Система] Соединение с сервером установлено!\n");
+            printf("[Система] Подключено! Пожалуйста, зарегистрируйтесь (/login <имя>)\n");
+            
             break;
 
         // 2. Получено сообщение от сервера (из общего чата)
@@ -64,12 +66,27 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
 
         // 3. Сокет готов отправить данные в сеть
         case LWS_CALLBACK_CLIENT_WRITEABLE:
-            pthread_mutex_lock(&lock_tx);
-            if (tx_msg_len > 0) {
-                lws_write(wsi, (unsigned char *)&tx_buffer[LWS_PRE], tx_msg_len, LWS_WRITE_TEXT);
-                tx_msg_len = 0; // Сбрасываем длину после отправки
+            if (!is_logged_in) {
+                // Если пользователь еще не вошел в чат, отправляем команду регистрации
+                pthread_mutex_lock(&lock_tx);
+                if (tx_msg_len > 0 && strncmp(&tx_buffer[LWS_PRE], "/login ", 7) == 0) {
+                    lws_write(wsi, (unsigned char *)&tx_buffer[LWS_PRE], tx_msg_len, LWS_WRITE_TEXT);
+                    tx_msg_len = 0; // Сбрасываем длину после отправки
+                    is_logged_in = true; // Отметим, что пользователь вошел
+                }
+                else {
+                    printf("[Система] Пожалуйста, зарегистрируйтесь с помощью команды: /login <имя>\n");
+                }
+                pthread_mutex_unlock(&lock_tx);
+            } else {
+                // Если пользователь уже вошел, отправляем обычные сообщения
+                pthread_mutex_lock(&lock_tx);
+                if (tx_msg_len > 0) {
+                    lws_write(wsi, (unsigned char *)&tx_buffer[LWS_PRE], tx_msg_len, LWS_WRITE_TEXT);
+                    tx_msg_len = 0; // Сбрасываем длину после отправки
+                }
+                pthread_mutex_unlock(&lock_tx);
             }
-            pthread_mutex_unlock(&lock_tx);
             break;
 
         // 4. Соединение закрыто или произошла ошибка
@@ -108,8 +125,8 @@ int main(int argc, char **argv) {
     struct lws_context *context;
     struct lws_client_connect_info ccinfo;
     pthread_t input_th;
-    const char *server_address = "127.0.0.1";
-    int server_port = 8080;
+    const char *server_address = SERVER_IP; // IP сервера по умолчанию
+    int server_port = SERVER_PORT; // Порт по умолчанию
     int opt;
 
     while ((opt = getopt(argc, argv, "s:p:h")) != -1) {
