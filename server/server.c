@@ -6,6 +6,7 @@
 #include "client_login.h"
 #include "parser.h"
 #include "utils.h"
+#include "server_utils.h"
 
 // Хранилище сервера держит указатели на структуры данных клиентов
 struct server_storage {
@@ -84,11 +85,8 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     char welcome_msg[MAX_NAME_LEN + strlen(WELCOME_MESSAGE) + 1];
                     snprintf(welcome_msg, sizeof(welcome_msg), 
                                                     WELCOME_MESSAGE, vhd->username);
-                    message_format welcome_msg_struct = {0};
-                    welcome_msg_struct.type = LOGIN_SUCCESS; // Отправляем клиенту сообщение о успешном логине
+                    message_format welcome_msg_struct = create_server_message(LOGIN_SUCCESS, vhd->username);
                     strcpy(welcome_msg_struct.text, welcome_msg);
-                    strcpy(welcome_msg_struct.source, "Сервер");
-                    strcpy(welcome_msg_struct.destination, vhd->username);
                     direct_message(vhd, &welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
                     
                     
@@ -103,11 +101,8 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     char login_fail_msg[MAX_NAME_LEN + strlen(LOGIN_FAIL_MESSAGE) + 1];
                     snprintf(login_fail_msg, sizeof(login_fail_msg), 
                                                     LOGIN_FAIL_MESSAGE);
-                    message_format welcome_msg_struct = {0};
-                    welcome_msg_struct.type = TEXT;
+                    message_format welcome_msg_struct = create_server_message(TEXT, vhd->username);
                     strcpy(welcome_msg_struct.text, login_fail_msg);
-                    strcpy(welcome_msg_struct.source, "Сервер");
-                    strcpy(welcome_msg_struct.destination, vhd->username);
                     direct_message(vhd, &welcome_msg_struct);
                 }
                 break;// Не рассылаем эту команду в чат
@@ -115,6 +110,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
 
             strcpy(msg->source, vhd->username); 
             generate_uuid(msg->message_guid);
+            msg->time_created = time(NULL);
             if (strlen(msg->destination) == 0) {
                 strcpy(msg->destination, GLOBAL_CHAT_NAME);
             }

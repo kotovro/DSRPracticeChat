@@ -1,17 +1,13 @@
 #include "parser.h" 
 #include "settings.h"
 #include "utils.h"
+#include "server_utils.h"
 
-message_format try_execute_command(const char *command, const char *destination, client_data *client) {
-    
-    message_format msg = {0};
-    msg.type = TEXT;
-    snprintf(msg.source, sizeof(msg.source), "%s", SERVER_NAME);
-    snprintf(msg.destination, sizeof(msg.destination), "%s", client->username);
-    generate_uuid(msg.message_guid);
-    
+message_format try_execute_command(const char *command, const char *destination, client_data *client) {    
+    message_format msg = create_server_message(TEXT, destination); 
     char copy_command[strlen(command) + 1];
     strcpy(copy_command, command);
+
     char *token = strtok(copy_command, " ");
     if (strcmp(token, "login") == 0) {
         // msg.type = COMMAND;

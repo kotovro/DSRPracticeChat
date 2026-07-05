@@ -17,7 +17,6 @@ static int force_exit = 0;
 static char tx_buffer[LWS_PRE + sizeof(message_format)];
 static pthread_mutex_t lock_tx; // Мутекс для защиты буфера отправки
 
-
 // Удаляет \n в конце строки
 static void trim_newline(char *s) {
     s[strcspn(s, "\n")] = 0;
@@ -112,6 +111,17 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
                 // return 0; // Игнорируем сообщения, которые не совпдаюат по формату
             }
             message_format *msg = (message_format *)in;
+            
+            
+            struct tm *local = localtime(&msg->time_created);
+            printf("%02d-%02d-%d %02d:%02d:%02d ",
+                    local->tm_mday,
+                    local->tm_mon + 1,
+                    local->tm_year + 1900,
+                    local->tm_hour,
+                    local->tm_min,
+                    local->tm_sec);
+            
             printf("{%s} [%s] в [%s]: %s\n", msg->message_guid, msg->source, msg->destination, msg->text);
             break;
         }

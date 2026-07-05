@@ -1,6 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#include <time.h>
 #include <stdbool.h>
 #include <libwebsockets.h>
 #include "../common/settings.h"
@@ -17,6 +18,9 @@ typedef struct message_format {
     char source[MAX_NAME_LEN];
     char message_guid[37]; // UUID string (36 characters + null terminator)
     char text[MAX_MSG_LEN];
+    time_t time_created;
+    time_t time_modified;
+    time_t time_deleted;
 } message_format;
 
 // Структура для хранения данных каждого подключенного клиента

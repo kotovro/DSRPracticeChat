@@ -6,8 +6,8 @@ CFLAGS += -I../common
 CFLAGS += -I../utils/
 LDLIBS = -lwebsockets
 
-server: server.o client_login.o utils.o parser.o
-	$(CC) $(CFLAGS) -o server  server.o client_login.o utils.o parser.o $(LDLIBS)
+server: server.o client_login.o utils.o parser.o server_utils.o
+	$(CC) $(CFLAGS) -o server  server.o client_login.o utils.o parser.o server_utils.o $(LDLIBS)
 
 server.o: server.c
 	$(CC) $(CFLAGS) -c server.c
@@ -20,6 +20,9 @@ client_login.o: client_login.c
 
 utils.o: ../utils/utils.c
 	$(CC) $(CFLAGS) -c ../utils/utils.c -o utils.o
+
+server_utils.o: ../utils/server_utils.c
+	$(CC) $(CFLAGS) -c ../utils/server_utils.c -o server_utils.o
 
 .PHONY: clean
 
