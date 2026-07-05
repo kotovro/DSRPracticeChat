@@ -122,7 +122,7 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
                     local->tm_min,
                     local->tm_sec);
             
-            printf("{%s} [%s] в [%s]: %s\n", msg->message_guid, msg->source, msg->destination, msg->text);
+            printf("{%s} [%s] для [%s]: %s\n", msg->message_guid, msg->source, msg->destination, msg->text);
             break;
         }
         // 3. Сокет готов отправить данные в сеть

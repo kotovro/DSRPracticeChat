@@ -3,7 +3,7 @@
 
 #define MAX_CLIENTS 100
 #define MAX_MSG_LEN 512
-#define MAX_NAME_LEN 32
+#define MAX_NAME_LEN 64
 #define MAX_GROUP_NAME_LEN MAX_NAME_LEN
 #define MAX_GROUPS 16
 #define MAX_QUEUE 2

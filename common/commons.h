@@ -4,7 +4,7 @@
 #include <time.h>
 #include <stdbool.h>
 #include <libwebsockets.h>
-#include "../common/settings.h"
+#include "settings.h"
 
 typedef enum {
     TEXT,
@@ -26,15 +26,19 @@ typedef struct message_format {
 // Структура для хранения данных каждого подключенного клиента
 typedef struct client_data {
     struct lws *wsi;
-    bool is_logged_in; // Флаг для проверки, вошел ли пользователь в чат
-    char username[MAX_NAME_LEN];
-    bool is_global_chat_disabled; // Флаг для проверки, отключен ли общий чат
+    int user_id;
 
     // Очередь исходящих сообщений для этого конкретного клиента
     message_format queue[MAX_QUEUE];
     int queue_count;
 } client_data;
 
+typedef struct user_data {
+    char username[MAX_NAME_LEN];
+    bool is_global_chat_disabled; // Флаг для проверки, отключен ли общий чат
+    bool is_moderator;
+    bool is_global_chat_banned;
+} user_data;
 
 
 #endif // COMMON_H

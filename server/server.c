@@ -1,26 +1,27 @@
 #include <libwebsockets.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "settings.h"
 #include "commons.h"
 #include "client_login.h"
 #include "parser.h"
 #include "utils.h"
 #include "server_utils.h"
+#include "user_storage.h"
 
 // Хранилище сервера держит указатели на структуры данных клиентов
 struct server_storage {
+    int client_count;
     struct client_data *clients[MAX_CLIENTS];
     struct group_data *groups[MAX_GROUPS];
-    int client_count;
     char buffer[LWS_PRE + sizeof(message_format)];
     size_t msg_len;
 };
 
 static struct server_storage chat_server;
 
-
-void queue_message_for_client(struct client_data *client, const message_format *msg) {
+void queue_message_for_client(client_data *client, const message_format *msg) {
     if (!client || client->queue_count >= MAX_QUEUE) return;
 
     // Записываем сообщение в текущий свободный слот очереди с отступом LWS_PRE
@@ -33,19 +34,29 @@ void queue_message_for_client(struct client_data *client, const message_format *
 }
 
 // Функция для отправки сообщения всем активным клиентам
-void broadcast_message(const message_format *message, struct client_data *exclude) {
-    printf("Рассылаем сообщение от %s всем клиентам (кроме %s)\n", message->source, exclude ? exclude->username : "никого");
+void broadcast_message(const message_format *message, client_data *exclude) {
+    char buf[7];
+    snprintf(buf, 6, "%d", exclude ? exclude->user_id : 0);
+    printf("Рассылаем сообщение от %s всем клиентам (кроме %s)\n", message->source, exclude ? buf : "никого");
     for (int i = 0; i < chat_server.client_count; i++) {
         if (chat_server.clients[i] && (exclude == NULL || chat_server.clients[i] != exclude)
-            && !chat_server.clients[i]->is_global_chat_disabled) {
+            && !get_user_by_id(chat_server.clients[i]->user_id)->is_global_chat_disabled) {
             queue_message_for_client(chat_server.clients[i], message);
         }
     }
 }
 
-void direct_message(struct client_data *recipient, const message_format *message) { ///think to hpo =to send to clients; most lilkel; make sirect to 
+void direct_message(client_data *recipient, const message_format *message) { ///think to hpo =to send to clients; most lilkel; make sirect to 
     queue_message_for_client(recipient, message);
 }
+
+// void route_message(message_format *message, client_data *exclude) {
+//     if (strcmp(message->destination, GLOBAL_CHAT_NAME)) {
+//         broadcast_message(message, exclude);
+//     } else {
+//         if (group_lookup)
+//     }
+// } 
 
 
 // Главный обработчик событий (Callback) для протокола чата
@@ -64,8 +75,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 return -1;
             }
             vhd->wsi = wsi;
-            // Присваиваем временное имя, пока клиент не прислал свое
-            snprintf(vhd->username, MAX_NAME_LEN, "User_%d", chat_server.client_count + 1);
+            
             
             // Сохраняем указатель на сессию в общий список сервера
             chat_server.clients[chat_server.client_count++] = vhd;
@@ -80,35 +90,40 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 // break;
             }
             message_format *msg = (message_format *)in;
-            if (!vhd->is_logged_in) {
+            if (!(vhd->user_id > 0)) {
                 if (login(msg, vhd)) {
+                    char *username = get_user_by_id(vhd->user_id)->username;
                     char welcome_msg[MAX_NAME_LEN + strlen(WELCOME_MESSAGE) + 1];
                     snprintf(welcome_msg, sizeof(welcome_msg), 
-                                                    WELCOME_MESSAGE, vhd->username);
-                    message_format welcome_msg_struct = create_server_message(LOGIN_SUCCESS, vhd->username);
+                                                    WELCOME_MESSAGE, 
+                                                    username);
+                    message_format welcome_msg_struct = create_server_message(LOGIN_SUCCESS, username);
                     strcpy(welcome_msg_struct.text, welcome_msg);
                     direct_message(vhd, &welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
                     
                     
                     char join_msg[MAX_NAME_LEN + strlen(JOIN_MESSAGE) + 1];
                     snprintf(join_msg, sizeof(join_msg), 
-                                                    JOIN_MESSAGE, vhd->username);
+                                                JOIN_MESSAGE, 
+                                                username);
                     welcome_msg_struct.type = TEXT; 
                     strcpy(welcome_msg_struct.text, join_msg);
                     strcpy(welcome_msg_struct.destination, GLOBAL_CHAT_NAME);
                     broadcast_message(&welcome_msg_struct, vhd); // Рассылаем всем клиентам сообщение о входе нового пользователя
                 } else {
+                    char *username = get_user_by_id(vhd->user_id)->username;
                     char login_fail_msg[MAX_NAME_LEN + strlen(LOGIN_FAIL_MESSAGE) + 1];
                     snprintf(login_fail_msg, sizeof(login_fail_msg), 
                                                     LOGIN_FAIL_MESSAGE);
-                    message_format welcome_msg_struct = create_server_message(TEXT, vhd->username);
+                    message_format welcome_msg_struct = create_server_message(TEXT, username);
                     strcpy(welcome_msg_struct.text, login_fail_msg);
                     direct_message(vhd, &welcome_msg_struct);
                 }
                 break;// Не рассылаем эту команду в чат
             }
 
-            strcpy(msg->source, vhd->username); 
+            char *username = get_user_by_id(vhd->user_id)->username;
+            strcpy(msg->source, username); 
             generate_uuid(msg->message_guid);
             msg->time_created = time(NULL);
             if (strlen(msg->destination) == 0) {
@@ -187,6 +202,7 @@ static struct lws_protocols protocols[] = {
 };
 
 int main(int argc, char **argv) {
+    init_user_storage();
     struct lws_context_creation_info info;
     struct lws_context *context;
     int opt;

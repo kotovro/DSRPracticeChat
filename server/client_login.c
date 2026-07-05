@@ -25,20 +25,26 @@ bool login(message_format *msg, client_data *data) {
         || strncmp(msg->text, LOGIN_COMMAND, LOGIN_COMMAND_LEN) != 0) {
         return false;
     }
-    
     size_t name_len = strlen(msg->text) - LOGIN_COMMAND_LEN;
     if (name_len >= MAX_NAME_LEN) name_len = MAX_NAME_LEN - 1;
+    
     if (!validate_username(msg->text + LOGIN_COMMAND_LEN)) {
         return false; // Имя пользователя не прошло валидацию
     }
 
-    printf("Клиент %s сменил имя на: %s\n", msg->text + LOGIN_COMMAND_LEN, data->username);
 
-    memcpy(data->username, msg->text + LOGIN_COMMAND_LEN, name_len);
+    int user_id = find_user_by_name(msg->text + LOGIN_COMMAND_LEN);
     
-    data->username[name_len] = '\0';
-    printf("Обработка логина: %s\n", data->username);
-    data->is_logged_in = true; // Отметим, что пользователь вошел
+    if (user_id <= 0) {
+        user_id = add_user(msg->text + LOGIN_COMMAND_LEN);
+    }
+
+    if (user_id <= 0) {
+        return false;
+    }
+
+    data->user_id = user_id;
+    printf("Клиент сменил имя на: %s\n", msg->text + LOGIN_COMMAND_LEN);
 
     // Здесь можно добавить логику для обработки логина клиента
     // Например, проверка имени пользователя, сохранение в базе данных и т.д.

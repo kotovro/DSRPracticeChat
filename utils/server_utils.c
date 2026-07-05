@@ -11,3 +11,4 @@ message_format create_server_message(message_type type, const char* destination)
     
     return msg;
 }
+

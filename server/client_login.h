@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include "../common/commons.h"
 #include "../common/settings.h"
+#include "user_storage.h"
+
 
 bool login(message_format *login_info, client_data *data);
 
