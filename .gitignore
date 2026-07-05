@@ -1,2 +1,6 @@
 *.o
 build/
+
+#бинарные файлы приложения
+client/client
+server/server

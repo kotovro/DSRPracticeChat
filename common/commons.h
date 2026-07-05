@@ -40,5 +40,12 @@ typedef struct user_data {
     bool is_global_chat_banned;
 } user_data;
 
+typedef struct group_data {
+    int members_list[MAX_CLIENTS];
+    int banned_users_list[MAX_CLIENTS];
+    int banned_users_count;
+    int members_count;
+    char group_name[MAX_GROUP_NAME_LEN];
+} group_data;
 
 #endif // COMMON_H

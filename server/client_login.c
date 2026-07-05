@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
+#include "group_storage.h"
 
 #define LOGIN_COMMAND "login "
 #define LOGIN_COMMAND_LEN strlen(LOGIN_COMMAND)
@@ -34,8 +35,12 @@ bool login(message_format *msg, client_data *data) {
 
 
     int user_id = find_user_by_name(msg->text + LOGIN_COMMAND_LEN);
-    
+
     if (user_id <= 0) {
+        int group_id = find_group_by_name(msg->text + LOGIN_COMMAND_LEN);
+        if (group_id >= 0) {
+            return false;
+        }
         user_id = add_user(msg->text + LOGIN_COMMAND_LEN);
     }
 
@@ -44,7 +49,7 @@ bool login(message_format *msg, client_data *data) {
     }
 
     data->user_id = user_id;
-    printf("Клиент сменил имя на: %s\n", msg->text + LOGIN_COMMAND_LEN);
+    printf("Клиент сменил имя на: %s, id %d, %d \n", msg->text + LOGIN_COMMAND_LEN, data->user_id, user_id);
 
     // Здесь можно добавить логику для обработки логина клиента
     // Например, проверка имени пользователя, сохранение в базе данных и т.д.

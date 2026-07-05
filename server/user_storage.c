@@ -1,11 +1,11 @@
 #include "user_storage.h"
 
 int user_count = 0;
-struct user_data users[MAX_CLIENTS + 1];
+user_data users[MAX_CLIENTS + 1];
 
 int find_user_by_name(char *name) {
     for (uint16_t i = 0; i < user_count; i++) {
-        if (strcmp(name, users[i].username)) {
+        if (strcmp(name, users[i].username) == 0) {
             return i;
         }
     }
