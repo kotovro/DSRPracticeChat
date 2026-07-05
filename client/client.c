@@ -5,17 +5,53 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include "../common/settings.h"
+#include "settings.h"
+#include "commons.h"
+#include "utils.h"
 
-static bool is_logged_in = false; // Флаг для проверки, вошел ли пользователь в чат
 // Глобальные переменные для управления состоянием
 static struct lws *web_socket = NULL;
 static int force_exit = 0;
 
 // Буфер для отправки сообщений (с обязательным отступом LWS_PRE)
-static char tx_buffer[LWS_PRE + MAX_MSG_LEN];
-static size_t tx_msg_len = 0;
+static char tx_buffer[LWS_PRE + sizeof(message_format)];
 static pthread_mutex_t lock_tx; // Мутекс для защиты буфера отправки
+
+
+// Удаляет \n в конце строки
+static void trim_newline(char *s) {
+    s[strcspn(s, "\n")] = 0;
+}
+
+// Проверка на пустую строку
+static int is_empty(const char *s) {
+    return s == NULL || s[0] == '\0';
+}
+
+static int parse_input(char *input, message_format *msg) {
+    msg->type = TEXT; // по умолчанию считаем, что это текстовое сообщение
+
+    input = ltrim(rtrim(input));
+    int error =  extract_bracket_word(input, msg->destination, sizeof(msg->destination) - 1);
+    if (error)
+    {
+        return 1; // ошибка при извлечении области применения
+    }
+
+    int offset = strlen(msg->destination); 
+    if (offset > 0) {
+        input = ltrim(input + offset + 2);
+    }
+    
+    if (input[0] == '/') {
+        msg->type = COMMAND;
+        input++; // пропускаем символ '/'
+    }
+    strncpy(msg->text, input, sizeof(msg->text) - 1);
+    msg->text[sizeof(msg->text) - 1] = '\0';
+  
+    return 0;
+}
 
 // Функция-поток для чтения ввода пользователя из консоли
 void *console_input_thread(void *arg) {
@@ -26,15 +62,24 @@ void *console_input_thread(void *arg) {
 
     while (!force_exit) {
         if (fgets(input, sizeof(input), stdin) != NULL) {
+
             // Удаляем символ переноса строки \n
-            input[strcspn(input, "\n")] = 0;
+            trim_newline(input);
 
-            if (strlen(input) == 0) continue;
+            if (is_empty(input))
+                continue;
 
+            // парсинг
+            message_format msg = {0};
+            int error = parse_input(input, &msg);
+            if (error) {
+                printf("Неверный формат сообщения.\n");
+                continue;
+            }
+    
             // Защищаем буфер и копируем туда данные
             pthread_mutex_lock(&lock_tx);
-            tx_msg_len = strlen(input);
-            memcpy(&tx_buffer[LWS_PRE], input, tx_msg_len);
+            memcpy(&tx_buffer[LWS_PRE], &msg, sizeof(message_format));
             pthread_mutex_unlock(&lock_tx);
 
             // Сигнализируем libwebsockets, что мы готовы отправить данные
@@ -51,52 +96,48 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
                                 void *user, void *in, size_t len) {
     (void)user;
 
+    
     switch (reason) {
         // 1. Успешное подключение к серверу
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
             web_socket = wsi;
-            printf("[Система] Подключено! Пожалуйста, зарегистрируйтесь (/login <имя>)\n");
+            printf("Подключено! Пожалуйста, зарегистрируйтесь (/login <имя>)\n");
             
             break;
 
         // 2. Получено сообщение от сервера (из общего чата)
         case LWS_CALLBACK_CLIENT_RECEIVE:
-            printf("[Чат]: %.*s\n", (int)len, (char *)in);
+        {
+            if (len < sizeof(message_format)) {
+                // return 0; // Игнорируем сообщения, которые не совпдаюат по формату
+            }
+            message_format *msg = (message_format *)in;
+            printf("{%s} [%s] в [%s]: %s\n", msg->message_guid, msg->source, msg->destination, msg->text);
             break;
-
+        }
         // 3. Сокет готов отправить данные в сеть
         case LWS_CALLBACK_CLIENT_WRITEABLE:
-            if (!is_logged_in) {
-                // Если пользователь еще не вошел в чат, отправляем команду регистрации
-                pthread_mutex_lock(&lock_tx);
-                if (tx_msg_len > 0 && strncmp(&tx_buffer[LWS_PRE], "/login ", 7) == 0) {
-                    lws_write(wsi, (unsigned char *)&tx_buffer[LWS_PRE], tx_msg_len, LWS_WRITE_TEXT);
-                    tx_msg_len = 0; // Сбрасываем длину после отправки
-                    is_logged_in = true; // Отметим, что пользователь вошел
-                }
-                else {
-                    printf("[Система] Пожалуйста, зарегистрируйтесь с помощью команды: /login <имя>\n");
-                }
-                pthread_mutex_unlock(&lock_tx);
-            } else {
-                // Если пользователь уже вошел, отправляем обычные сообщения
-                pthread_mutex_lock(&lock_tx);
-                if (tx_msg_len > 0) {
-                    lws_write(wsi, (unsigned char *)&tx_buffer[LWS_PRE], tx_msg_len, LWS_WRITE_TEXT);
-                    tx_msg_len = 0; // Сбрасываем длину после отправки
-                }
-                pthread_mutex_unlock(&lock_tx);
+        {
+            const message_format *raw = (const message_format *)&tx_buffer[LWS_PRE];
+            if (strlen(raw->text) == 0) {
+                break; // если текст пустой, ничего не отправляем
             }
+            pthread_mutex_lock(&lock_tx);
+            lws_write(wsi,
+                    (unsigned char *)&tx_buffer[LWS_PRE],
+                    sizeof(message_format),
+                    LWS_WRITE_BINARY);   
+            pthread_mutex_unlock(&lock_tx);
             break;
-
+        }
         // 4. Соединение закрыто или произошла ошибка
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-            fprintf(stderr, "[Ошибка] Не удалось подключиться к серверу.\n");
+            fprintf(stderr, "Ошибка: Не удалось подключиться к серверу.\n");
             force_exit = 1;
             break;
 
         case LWS_CALLBACK_CLIENT_CLOSED:
-            printf("[Система] Соединение закрыто.\n");
+            printf("Соединение закрыто.\n");
             force_exit = 1;
             break;
 
@@ -112,7 +153,7 @@ static struct lws_protocols protocols[] = {
         .name = "chat-protocol",
         .callback = callback_chat_client,
         .per_session_data_size = 0,
-        .rx_buffer_size = MAX_MSG_LEN,
+        .rx_buffer_size = sizeof(message_format),
         .id = 0,
         .user = NULL,
         .tx_packet_size = 0

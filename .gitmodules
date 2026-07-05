@@ -1,0 +1,9 @@
+[submodule "utils/utils/cJSON"]
+	path = utils/utils/cJSON
+	url = https://github.com/DaveGamble/cJSON.git
+[submodule "utils/cJSON"]
+	path = utils/cJSON
+	url = https://github.com/DaveGamble/cJSON.git
+[submodule "utils/libwebsockets"]
+	path = utils/libwebsockets
+	url = https://github.com/warmcat/libwebsockets.git

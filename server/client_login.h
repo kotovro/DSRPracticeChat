@@ -6,7 +6,7 @@
 #include "../common/commons.h"
 #include "../common/settings.h"
 
-bool login(char *login_info, size_t len, client_data *data);
+bool login(message_format *login_info, client_data *data);
 
-#endif
+#endif // CLIENT_LOGIN_H
 
