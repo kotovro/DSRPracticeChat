@@ -1,13 +1,16 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "utils.h"
 #include "commons.h"
 
 void generate_uuid(char *uuid_str) {
     // Генерация UUID версии 4 (рандомный)
     const char *chars = "0123456789abcdef";
-    for (int i = 0; i < 36; i++) {
+    for (int i = 0; i < GUID_LEN; i++) {
         if (i == 8 || i == 13 || i == 18 || i == 23) {
             uuid_str[i] = '-';
         } else if (i == 14) {
@@ -18,7 +21,7 @@ void generate_uuid(char *uuid_str) {
             uuid_str[i] = chars[rand() % 16];
         }
     }
-    uuid_str[36] = '\0'; // Завершающий нулевой символ
+    uuid_str[GUID_LEN] = '\0'; // Завершающий нулевой символ
 }
 
 void message_to_json(const message_format *msg, char *json_str, size_t max_len) {
@@ -80,4 +83,70 @@ char* rtrim(char *s) {
         s[--len] = '\0';
     }
     return s;
+}
+
+void write_to_log(char *msg, char *file_path) {
+    char filename[32];
+    char path[512];
+
+    time_t now = time(NULL);
+    struct tm tm;
+
+    localtime_r(&now, &tm);
+
+    // YYYY-MM-DD.log
+    strftime(filename, sizeof(filename), "%Y-%m-%d.log", &tm);
+
+    snprintf(path, sizeof(path), "%s/%s", file_path, filename);
+
+    int desc = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+    if (desc >= 0) {
+        if (write(desc, msg, strlen(msg)) < 0) {
+            printf("%s: %d", "Ошибка записи в файл", errno);
+        }
+    }
+    close(desc);
+}
+
+
+int mkdir_p(const char *path, mode_t mode) {
+    char tmp[512];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+
+    if (tmp[len - 1] == '/') {
+        tmp[len - 1] = '\0';
+    }
+
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+
+            if (mkdir(tmp, mode) != 0) {
+                
+            }
+
+            *p = '/';
+        }
+    }
+
+    if (mkdir(tmp, mode) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int is_directory(const char *path) {
+    struct stat st;
+
+    if (stat(path, &st) != 0) {
+        return 0; // Директория не существует
+    }
+
+    return S_ISDIR(st.st_mode);
 }

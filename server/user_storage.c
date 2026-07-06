@@ -18,7 +18,7 @@ user_data *get_user_by_id(int id) {
 
 void init_user_storage() {
     user_count = 1;
-    strcpy(users[0].username, "Неизвестный пользователь");
+    strcpy(users[0].username, "Незарегистрированный пользователь");
 }
 
 int add_user(char *username) {

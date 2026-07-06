@@ -12,6 +12,7 @@
 // Глобальные переменные для управления состоянием
 static struct lws *web_socket = NULL;
 static int force_exit = 0;
+static char logs_dir[512] = "/tmp/chat_client/";
 
 // Буфер для отправки сообщений (с обязательным отступом LWS_PRE)
 static char tx_buffer[LWS_PRE + sizeof(message_format)];
@@ -56,8 +57,6 @@ static int parse_input(char *input, message_format *msg) {
 void *console_input_thread(void *arg) {
     (void)arg;
     char input[MAX_MSG_LEN];
-
-    printf("Вы вошли в чат. Введите сообщение и нажмите Enter:\n");
 
     while (!force_exit) {
         if (fgets(input, sizeof(input), stdin) != NULL) {
@@ -113,16 +112,22 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
             message_format *msg = (message_format *)in;
             
             
-            struct tm *local = localtime(&msg->time_created);
-            printf("%02d-%02d-%d %02d:%02d:%02d ",
-                    local->tm_mday,
-                    local->tm_mon + 1,
-                    local->tm_year + 1900,
-                    local->tm_hour,
-                    local->tm_min,
-                    local->tm_sec);
+            struct tm *local = localtime(&msg->time_created); 
             
-            printf("{%s} [%s] для [%s]: %s\n", msg->message_guid, msg->source, msg->destination, msg->text);
+            char log_message[LOG_MESSAGE_LEN];
+            char timestamp[20];
+            strftime(timestamp, sizeof timestamp,
+                "%Y-%m-%d %H:%M:%S", local);
+            snprintf(log_message, LOG_MESSAGE_LEN, "%s {%s} [%s] для [%s]: %s\n",
+                    timestamp,
+                    msg->message_guid, 
+                    msg->source, 
+                    msg->destination, 
+                    msg->text);
+            printf("%s", log_message);
+            write_to_log(log_message, logs_dir);
+            // wtite_to_log(msg,  ,);
+
             break;
         }
         // 3. Сокет готов отправить данные в сеть
@@ -180,7 +185,7 @@ int main(int argc, char **argv) {
     int server_port = SERVER_PORT; // Порт по умолчанию
     int opt;
 
-    while ((opt = getopt(argc, argv, "s:p:h")) != -1) {
+    while ((opt = getopt(argc, argv, "s:p:d:h")) != -1) {
         switch (opt) {
             case 's':
                 server_address = optarg;
@@ -192,12 +197,20 @@ int main(int argc, char **argv) {
                     return 1;
                 }
                 break;
+            case 'd':
+                if (!is_directory(optarg)) {
+                    printf("Директории с адресом %s не существует, логи пишем в %s\n", optarg, logs_dir);
+                } else {
+                    strcpy(logs_dir, optarg);
+                }
+                break;    
             case 'h':
             default:
-                fprintf(stderr, "Использование: %s [-s server_ip] [-p server_port]\n", argv[0]);
+                fprintf(stderr, "Использование: %s [-s server_ip] [-p server_port] [-d директория]\n", argv[0]);
                 return opt == 'h' ? 0 : 1;
         }
     }
+
 
     pthread_mutex_init(&lock_tx, NULL);
 
@@ -214,6 +227,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    mkdir_p(logs_dir, 0755);
     // Настройка параметров подключения к серверу
     memset(&ccinfo, 0, sizeof(ccinfo));
     ccinfo.context = context;

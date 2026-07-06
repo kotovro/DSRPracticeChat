@@ -16,7 +16,7 @@ typedef struct message_format {
     message_type type; // либо просто сообщение с текстом, либо команда с аргументами 
     char destination[MAX_GROUP_NAME_LEN];      // "область применения" "global", "group:<name>"
     char source[MAX_NAME_LEN];
-    char message_guid[37]; // UUID string (36 characters + null terminator)
+    char message_guid[GUID_LEN + 1]; // UUID string (36 characters + null terminator)
     char text[MAX_MSG_LEN];
     time_t time_created;
     time_t time_modified;
