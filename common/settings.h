@@ -4,6 +4,7 @@
 #define MAX_CLIENTS 100
 #define MAX_MSG_LEN 1024
 #define MAX_NAME_LEN 128
+#define MAX_MESSAGES_STORED 256 
 #define MAX_GROUP_NAME_LEN MAX_NAME_LEN
 #define GUID_LEN 36
 #define MSG_TEMPLATE "yyyy-MM-dd hh:mm:ss {} [] для []: \n"

@@ -12,7 +12,7 @@ int extract_bracket_word(const char *str, char *out, size_t out_size);
 char* ltrim(char *s);
 char* rtrim(char *s);
 
-void write_to_log(char *msg, char *file_path);
+void write_to_log(char *msg, char *target_dir);
 
 int mkdir_p(const char *path, mode_t mode);
 int is_directory(const char *path);

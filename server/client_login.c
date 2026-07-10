@@ -35,16 +35,17 @@ bool login(message_format *msg, client_data *data) {
 
 
     int user_id = find_user_by_name(msg->text + LOGIN_COMMAND_LEN);
-
+    
     if (user_id <= 0) {
         int group_id = find_group_by_name(msg->text + LOGIN_COMMAND_LEN);
         if (group_id >= 0) {
             return false;
         }
         user_id = add_user(msg->text + LOGIN_COMMAND_LEN);
-    }
-
-    if (user_id <= 0) {
+        if (user_id <= 0) {
+            return false;
+        }
+    } else {
         return false;
     }
 

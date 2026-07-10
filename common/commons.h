@@ -23,14 +23,20 @@ typedef struct message_format {
     time_t time_deleted;
 } message_format;
 
+typedef struct network_message {
+    char network_prefix[LWS_PRE];
+    message_format message;
+} network_message;
+
 // Структура для хранения данных каждого подключенного клиента
 typedef struct client_data {
     struct lws *wsi;
     int user_id;
 
     // Очередь исходящих сообщений для этого конкретного клиента
-    message_format queue[MAX_QUEUE];
+    int first_message;
     int queue_count;
+    network_message queue[MAX_QUEUE];
 } client_data;
 
 typedef struct user_data {

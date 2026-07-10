@@ -85,7 +85,7 @@ char* rtrim(char *s) {
     return s;
 }
 
-void write_to_log(char *msg, char *file_path) {
+void write_to_log(char *msg, char *target_dir) {
     char filename[32];
     char path[512];
 
@@ -97,7 +97,7 @@ void write_to_log(char *msg, char *file_path) {
     // YYYY-MM-DD.log
     strftime(filename, sizeof(filename), "%Y-%m-%d.log", &tm);
 
-    snprintf(path, sizeof(path), "%s/%s", file_path, filename);
+    snprintf(path, sizeof(path), "%s/%s", target_dir, filename);
 
     int desc = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
 

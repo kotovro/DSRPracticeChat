@@ -27,6 +27,7 @@ int add_user(char *username) {
     }
     strcpy(users[user_count].username, username);
     user_count++;
+    
     return user_count - 1;
 }
 

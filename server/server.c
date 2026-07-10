@@ -9,6 +9,7 @@
 #include "utils.h"
 #include "server_utils.h"
 #include "user_storage.h"
+#include "group_storage.h"
 
 // Хранилище сервера держит указатели на структуры данных клиентов
 struct server_storage {
@@ -20,13 +21,14 @@ struct server_storage {
 };
 
 static struct server_storage chat_server;
+static char logs_dir[512] = "/tmp/chat_server/";
 
 void queue_message_for_client(client_data *client, const message_format *msg) {
-    if (!client || client->queue_count >= MAX_QUEUE) return;
+    if (!client || (client->first_message + client->queue_count) >= MAX_QUEUE) return;
 
     // Записываем сообщение в текущий свободный слот очереди с отступом LWS_PRE
-    int slot = client->queue_count;
-    memcpy(&client->queue[slot].text[LWS_PRE], msg, sizeof(message_format));
+    int slot = client->first_message + client->queue_count;
+    client->queue[slot].message = *msg;
     client->queue_count++;
 
     // Просим lws вызвать событие WRITEABLE для этого клиента
@@ -46,50 +48,119 @@ void broadcast_message(const message_format *message, client_data *exclude) {
     }
 }
 
-void direct_message(client_data *recipient, const message_format *message) { ///think to hpo =to send to clients; most lilkel; make sirect to 
-    queue_message_for_client(recipient, message);
+void direct_message(client_data *client, const message_format *message) { 
+    queue_message_for_client(client, message);
 }
 
-// void route_message(message_format *message, client_data *exclude) {
-//     if (strcmp(message->destination, GLOBAL_CHAT_NAME)) {
-//         broadcast_message(message, exclude);
-//     } else {
-//         if (group_lookup)
-//     }
-// } 
+void group_message(group_data* group_info, message_format *message, client_data *exclude) {
+    for (int i = 0; i < chat_server.client_count; i++) {
+        if (chat_server.clients[i] == exclude) {
+            continue;
+        }
+        for (int j = 0; j < group_info->members_count; j++) {
+            if (chat_server.clients[i]->user_id == group_info->members_list[j]) {
+                queue_message_for_client(chat_server.clients[i], message);
+                break;
+            }
+        }
+    }
+}
 
+void route_message(message_format *message, client_data *source, client_data *exclude) {
+    bool is_from_server = source == NULL; 
+    printf("Destination is: %s \n", message->destination);
+    if (strcmp(message->destination, GLOBAL_CHAT_NAME) == 0) {
+        user_data *user = is_from_server ? NULL : get_user_by_id(source->user_id);
+        if ((is_from_server || source->user_id > 0) && user != NULL && !user->is_global_chat_banned) {
+            broadcast_message(message, exclude);
+        }
+        return;
+    }
+    int group_id = find_group_by_name(message->destination); 
+    if (group_id >= 0) {
+        group_data *group = get_group_by_id(group_id);  
+        if (is_from_server || !is_user_banned_in_group(source->user_id, group_id)) {
+            group_message(group, message, exclude);
+        } 
+        return; 
+    }
+    int user_id = find_user_by_name(message->destination);
+    if (user_id > 0) {
+        for (int i = 0; i < chat_server.client_count; i++) {
+            if (chat_server.clients[i]->user_id == user_id) {  
+                direct_message(chat_server.clients[i], message);
+                break;
+            }       
+        }
+        if (!is_from_server) {
+            direct_message(source, message);
+        }
+        return;
+    }
+} 
+
+void server_log(char *server_signal) {
+    write_to_log(server_signal, logs_dir);
+    printf("%s", server_signal);        
+}
 
 // Главный обработчик событий (Callback) для протокола чата
 static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                          void *user, void *in, size_t len) {
-    
+    time_t time_now = time(NULL);
+    struct tm *local = localtime(&time_now); 
+    char timestamp[20];
+    strftime(timestamp, sizeof timestamp, "%Y-%m-%d %H:%M:%S", local);
     // Приводим void *user к нашему типу сессии
     struct client_data *vhd = (struct client_data *)user;
+    char log_message[LOG_MESSAGE_LEN];        
 
     switch (reason) {
         
         // 1. Клиент успешно подключился
          case LWS_CALLBACK_ESTABLISHED:
-            printf("Новый клиент подключился. Всего клиентов: %d\n", chat_server.client_count + 1);
+         {
+            char *server_message = "%s Новый клиент подключился. Всего клиентов: %d\n";   
+            snprintf(log_message, LOG_MESSAGE_LEN, server_message,
+                    timestamp,
+                    chat_server.client_count + 1);
+            server_log(log_message);
+            
             if (chat_server.client_count >= MAX_CLIENTS) {
+                server_log("Отказано в подключении");
                 return -1;
             }
             vhd->wsi = wsi;
             
-            
-            // Сохраняем указатель на сессию в общий список сервера
+            // Сохраняем указатель на сессию в контекст сервера
             chat_server.clients[chat_server.client_count++] = vhd;
             break;
-
-
+        }
         // 2. Получено сообщение от клиента
         case LWS_CALLBACK_RECEIVE:
         {
-            if (len < sizeof(message_format)) {
-                printf("Ошибка: получено сообщение меньшего размера, чем ожидается. Размер: %zu, Ожидаемый размер: %zu\n", len, sizeof(message_format));
-                // break;
-            }
             message_format *msg = (message_format *)in;
+            char *username = get_user_by_id(vhd->user_id)->username;
+            strcpy(msg->source, username); 
+            generate_uuid(msg->message_guid);
+            msg->time_created = time(NULL);
+            if (strlen(msg->destination) == 0) {
+                strcpy(msg->destination, GLOBAL_CHAT_NAME);
+            }
+            snprintf(log_message, LOG_MESSAGE_LEN, "%s Получено сообщение {%s} [%s] для [%s]: %s\n",
+                    timestamp,
+                    msg->message_guid, 
+                    msg->source, 
+                    msg->destination, 
+                    msg->text);
+            server_log(log_message);
+            
+            if (len != sizeof(message_format)) {
+                snprintf(log_message, LOG_MESSAGE_LEN, "%s Ошибка: получено сообщение некорректного размера. Размер: %zu, Ожидаемый размер: %zu\n", timestamp, len, sizeof(message_format));
+                server_log(log_message);
+                break;
+            }
+
             if (!(vhd->user_id > 0)) {
                 if (login(msg, vhd)) {
                     char *username = get_user_by_id(vhd->user_id)->username;
@@ -97,10 +168,10 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     snprintf(welcome_msg, sizeof(welcome_msg), 
                                                     WELCOME_MESSAGE, 
                                                     username);
+                    
                     message_format welcome_msg_struct = create_server_message(LOGIN_SUCCESS, username);
                     strcpy(welcome_msg_struct.text, welcome_msg);
                     direct_message(vhd, &welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
-                    
                     
                     char join_msg[MAX_NAME_LEN + strlen(JOIN_MESSAGE) + 1];
                     snprintf(join_msg, sizeof(join_msg), 
@@ -121,25 +192,14 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 }
                 break;// Не рассылаем эту команду в чат
             }
-
-            char *username = get_user_by_id(vhd->user_id)->username;
-            strcpy(msg->source, username); 
-            generate_uuid(msg->message_guid);
-            msg->time_created = time(NULL);
-            if (strlen(msg->destination) == 0) {
-                strcpy(msg->destination, GLOBAL_CHAT_NAME);
-            }
-
+           
             if (msg->type == TEXT) {
-                  
-               printf("Получено сообщение от  %s для %s : %s\n", msg->source, msg->destination, msg->text);
-
-                // Рассылаем всем клиентам, включая отправителя
-                broadcast_message(msg, NULL);
+                // Рассылаем сообщение
+                route_message(msg, vhd, NULL);
             } else if (msg->type == COMMAND) {
                 // Обработка команд
                 message_format result = try_execute_command(msg->text, msg->destination, vhd);
-                direct_message(vhd, &result); // Отправляем команду обратно клиенту, чтобы он видел результат
+                route_message(&result, NULL, NULL); // Отправляем результат
             }
             
             break;
@@ -150,15 +210,26 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 if (vhd->queue_count > 0) {
                 // Отправляем самое первое сообщение (индекс 0)
                 //in data, there will be JSON
-                int amt = lws_write(wsi, (unsigned char *)&vhd->queue[0].text[LWS_PRE], 
+                message_format *msg = &(vhd->queue[vhd->first_message].message);
+                int amt = lws_write(wsi, (unsigned char *)msg, 
                                     sizeof(message_format), LWS_WRITE_BINARY);
-                if (amt < 0) return -1; // Ошибка отправки, закрываем соединение
-
-                // Сдвигаем очередь влево (удаляем отправленное сообщение)
-                if (vhd->queue_count > 1) {
-                    vhd->queue[0] = vhd->queue[1];
+        
+                snprintf(log_message, LOG_MESSAGE_LEN, "%s %s сообщение {%s} от %s пользователю %s : %s\n", timestamp,
+                    amt < 0 ? "Ошибка отправки:" : "Отправлено",
+                    msg->message_guid, 
+                    msg->source, 
+                    get_user_by_id(vhd->user_id)->username, 
+                    msg->text);
+                server_log(log_message);
+                if (amt < 0) {
+                    return -1;
                 }
                 vhd->queue_count--;
+                if (vhd->queue_count == 0) {
+                    vhd->first_message = 0;
+                } else {
+                    vhd->first_message++;
+                }
 
                 // ВАЖНО: Если в очереди ОСТАЛИСЬ сообщения, просим lws вызвать 
                 // событие WRITEABLE снова на следующем итерации цикла event loop!
@@ -178,7 +249,9 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     break;
                 }
             }
-            printf("Клиент отключился. Осталось: %d\n", chat_server.client_count);
+            snprintf(log_message, LOG_MESSAGE_LEN, "Клиент %s отключился. Осталось: %d\n", get_user_by_id(vhd->user_id)->username, chat_server.client_count);
+            server_log(log_message);
+            
             break;
 
         default:
@@ -208,7 +281,7 @@ int main(int argc, char **argv) {
     int opt;
     int port = SERVER_PORT; // Порт по умолчанию
     
-    while ((opt = getopt(argc, argv, "p:h")) != -1) {
+    while ((opt = getopt(argc, argv, "p:d:h")) != -1) {
         switch (opt) {
             case 'p':
                 port = atoi(optarg);
@@ -217,6 +290,13 @@ int main(int argc, char **argv) {
                     return 1;
                 }
                 break;
+            case 'd':
+                if (!is_directory(optarg)) {
+                    printf("Директории с адресом %s не существует, логи пишем в %s\n", optarg, logs_dir);
+                } else {
+                    strcpy(logs_dir, optarg);
+                }
+                break;  
             case 'h':
             default:
                 fprintf(stderr, "Использование: %s [-p server_port]\n", argv[0]);
@@ -231,10 +311,12 @@ int main(int argc, char **argv) {
     info.gid = -1;
     info.uid = -1;
 
+    mkdir_p(logs_dir, 0755);
     // Создаем контекст сервера
     context = lws_create_context(&info);
     if (!context) {
         fprintf(stderr, "Ошибка инициализации libwebsockets\n");
+        
         return 1;
     }
 

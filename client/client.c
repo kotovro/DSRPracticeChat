@@ -126,7 +126,6 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
                     msg->text);
             printf("%s", log_message);
             write_to_log(log_message, logs_dir);
-            // wtite_to_log(msg,  ,);
 
             break;
         }

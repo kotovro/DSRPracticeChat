@@ -48,3 +48,7 @@ bool add_user_to_group(int user_id, int group_id) {
     group->members_count++;
     return true;
 }
+
+group_data *get_group_by_id(int group_id) {
+    return groups + group_id;
+}
