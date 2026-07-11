@@ -10,6 +10,7 @@
 #include "server_utils.h"
 #include "user_storage.h"
 #include "group_storage.h"
+#include "message_storage.h"
 
 // Хранилище сервера держит указатели на структуры данных клиентов
 struct server_storage {
@@ -67,11 +68,12 @@ void group_message(group_data* group_info, message_format *message, client_data 
 }
 
 void route_message(message_format *message, client_data *source, client_data *exclude) {
-    bool is_from_server = source == NULL; 
-    printf("Destination is: %s \n", message->destination);
+    bool is_from_server = strcmp(message->source, SERVER_NAME) == 0; 
     if (strcmp(message->destination, GLOBAL_CHAT_NAME) == 0) {
+        printf("%s", "will try broadcast \n");
         user_data *user = is_from_server ? NULL : get_user_by_id(source->user_id);
-        if ((is_from_server || source->user_id > 0) && user != NULL && !user->is_global_chat_banned) {
+        if (is_from_server || (source->user_id > 0 && user != NULL && !user->is_global_chat_banned)) {
+            printf("%s", "will do broadcast \n");
             broadcast_message(message, exclude);
         }
         return;
@@ -141,8 +143,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
         {
             message_format *msg = (message_format *)in;
             char *username = get_user_by_id(vhd->user_id)->username;
-            strcpy(msg->source, username); 
-            generate_uuid(msg->message_guid);
+            strcpy(msg->source, username); ;
             msg->time_created = time(NULL);
             if (strlen(msg->destination) == 0) {
                 strcpy(msg->destination, GLOBAL_CHAT_NAME);
@@ -154,7 +155,8 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     msg->destination, 
                     msg->text);
             server_log(log_message);
-            
+            save_message(msg);
+
             if (len != sizeof(message_format)) {
                 snprintf(log_message, LOG_MESSAGE_LEN, "%s Ошибка: получено сообщение некорректного размера. Размер: %zu, Ожидаемый размер: %zu\n", timestamp, len, sizeof(message_format));
                 server_log(log_message);
@@ -199,7 +201,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
             } else if (msg->type == COMMAND) {
                 // Обработка команд
                 message_format result = try_execute_command(msg->text, msg->destination, vhd);
-                route_message(&result, NULL, NULL); // Отправляем результат
+                route_message(&result, vhd, NULL); // Отправляем результат
             }
             
             break;

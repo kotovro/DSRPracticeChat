@@ -111,15 +111,16 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
             }
             message_format *msg = (message_format *)in;
             
-            
             struct tm *local = localtime(&msg->time_created); 
             
             char log_message[LOG_MESSAGE_LEN];
             char timestamp[20];
+            //check fort date modfied
             strftime(timestamp, sizeof timestamp,
                 "%Y-%m-%d %H:%M:%S", local);
-            snprintf(log_message, LOG_MESSAGE_LEN, "%s {%s} [%s] для [%s]: %s\n",
+            snprintf(log_message, LOG_MESSAGE_LEN, "%s %s {%s} [%s] для [%s]: %s\n",
                     timestamp,
+                    msg->time_modified > 0 ? "Изменено сообщение" : "", 
                     msg->message_guid, 
                     msg->source, 
                     msg->destination, 

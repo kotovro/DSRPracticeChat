@@ -10,6 +10,7 @@ message_format try_execute_command(const char *command, const char *destination,
     message_format msg = create_server_message(TEXT, destination); 
     char copy_command[strlen(command) + 1];
     strcpy(copy_command, command);
+    char *copy_command_end = copy_command + strlen(copy_command);
 
     char *token = strtok(copy_command, " ");
     if (strcmp(token, "login") == 0) {
@@ -87,34 +88,59 @@ message_format try_execute_command(const char *command, const char *destination,
             strcpy(msg.destination, get_user_by_id(client->user_id)->username);
             return msg;
         } 
+        printf("%s", "will try getmesage by id \n");
         message_format *msg_to_edit = get_message_by_id(token);
+        if (msg_to_edit == NULL) {
+            snprintf(msg.text, sizeof(msg.text), "Сообщение с guid %s невозомжно отредактировать.", token);
+            strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+            return msg;
+        }
+        printf("%s", "got the message id \n");
         int editor_id = client->user_id;
-        if (strcmp(get_user_by_id(editor_id)->username, msg_to_edit->source) != 0) {
+        if (strcmp(msg_to_edit->source, get_user_by_id(editor_id)->username) != 0) {
             snprintf(msg.text, sizeof(msg.text), "У Вас недостаточно прав для редактирования данного сообщения.");
             strcpy(msg.destination, get_user_by_id(client->user_id)->username);
             return msg;
         }
-        // int group_id = msg_to_edit->destination;
-        // if (is_user_banned_in_group(client->user_id, group_id)) { // проверка, не заблокирован ли пользователь на момент редактирования сообщения в группе
-        //     strcpy(msg.text, "Недостаточно прав для выполнения этой команды");
-        //     strcpy(msg.destination, get_user_by_id(client->user_id)->username);
-        //     return msg;
-        // }
-        
-        // if (!is_user_in_group(client->user_id, group_id)) { // предотвращение ситуации, в котрой пользователь имеет доступ к guid сообщению группы, в котрой НЕ состоит и пытается его отредактировать  
-        //     strcpy(msg.text, "Недостаточно прав для выполнения этой команды");
-        //     strcpy(msg.destination, get_user_by_id(client->user_id)->username);
-        //     return msg;
-        // }
-        // token = strtok(NULL, " ");
+        if (copy_command_end <= token + strlen(token)) {
+            snprintf(msg.text, sizeof(msg.text), "Формат команды: /edit <guid сообщения> <новый текст сообщения>.");
+            strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+            return msg;
+        }
+        char *new_text = token + strlen(token) + 1;
+        printf("%s", "will try edit \n");
+        edit_message_text(msg_to_edit, new_text);
+        memcpy(&msg, msg_to_edit, sizeof(message_format));
+        return msg;
+    } else if (strcmp(token, "del") == 0) {
+        token = strtok(NULL, " ");
+        if (token == NULL) {
+            snprintf(msg.text, sizeof(msg.text), "Формат команды: /edit <guid сообщения> <новый текст сообщения>.");
+            strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+            return msg;
+        } 
+        message_format *msg_to_edit = get_message_by_id(token);
+        if (msg_to_edit == NULL) {
+            snprintf(msg.text, sizeof(msg.text), "Сообщение с guid %s невозомжно отредактировать.", token);
+            strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+            return msg;
+        }
+        int editor_id = client->user_id;
+        if (strcmp(msg_to_edit->source, get_user_by_id(editor_id)->username) != 0) {
+            snprintf(msg.text, sizeof(msg.text), "У Вас недостаточно прав для редактирования данного сообщения.");
+            strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+            return msg;
+        }
+        token = strtok(NULL, " ");
         // if (token == NULL) {
         //     snprintf(msg.text, sizeof(msg.text), "Формат команды: /edit <guid сообщения> <новый текст сообщения>.");
         //     strcpy(msg.destination, get_user_by_id(client->user_id)->username);
         //     return msg;
         // }
-        // msg_to_edit->text = token;
-        // // strcpy(msg.destination, msg_to_edit->destination);
-        // // strcpy(msg.text, msg_to_edit->destination);
+        edit_message_text(msg_to_edit, token);
+        strcpy(msg.destination, msg_to_edit->destination);
+        strcpy(msg.text, msg_to_edit->destination);
+        msg.time_modified = time(NULL);
     } else {
         // Если команда не распознана, возвращаем текстовое сообщение
         strncpy(msg.text, command, sizeof(msg.text) - 1);

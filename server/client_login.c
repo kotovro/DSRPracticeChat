@@ -11,7 +11,7 @@
 // TODO: Превреить уникальность имени пользователя, добавить проверку на запрещенные символы и т.д.
 // TODO: Добавить проверку забанен или нет пользователь 
 bool validate_username(const char *username) {
-    if (username == NULL || strlen(username) == 0 || strlen(username) >= MAX_NAME_LEN) {
+    if (username == NULL || strlen(username) == 0 || strlen(username) >= MAX_NAME_LEN || strcmp(username, SERVER_NAME) == 0 || strcmp(username, GLOBAL_CHAT_NAME) == 0) {
         return false;
     }
     // Дополнительные проверки на допустимые символы можно добавить здесь
@@ -32,7 +32,6 @@ bool login(message_format *msg, client_data *data) {
     if (!validate_username(msg->text + LOGIN_COMMAND_LEN)) {
         return false; // Имя пользователя не прошло валидацию
     }
-
 
     int user_id = find_user_by_name(msg->text + LOGIN_COMMAND_LEN);
     
