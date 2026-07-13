@@ -1,7 +1,9 @@
 #include "user_storage.h"
 
-int user_count = 0;
-user_data users[MAX_CLIENTS + 1];
+#define USER_STORAGE_PATH "/tmp/server/users.lst" 
+
+static int user_count = 0;
+static user_data users[MAX_CLIENTS + 1];
 
 int find_user_by_name(char *name) {
     for (uint16_t i = 0; i < user_count; i++) {

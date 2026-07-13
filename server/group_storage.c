@@ -1,7 +1,9 @@
 #include "group_storage.h"
 
-int groups_count = 0;
-group_data groups[MAX_GROUPS];
+#define GROUP_STORAGE_PATH "/tmp/server/groups.lst" 
+
+static int groups_count = 0;
+static group_data groups[MAX_GROUPS];
 
 int find_group_by_name(const char *group_name) {
     for (uint16_t i = 0; i < groups_count; i++) {
@@ -51,4 +53,16 @@ bool add_user_to_group(int user_id, int group_id) {
 
 group_data *get_group_by_id(int group_id) {
     return groups + group_id;
+}
+
+int iterate_groups(int current_id) {
+    current_id++;
+    if (current_id < 0 || current_id >= groups_count) {
+        return -1;
+    }
+    return current_id; 
+}
+
+void init_group_storage() {
+
 }

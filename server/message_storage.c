@@ -2,6 +2,8 @@
 #include "user_storage.h"
 #include "utils.h"
 
+#define MESSAGE_STORAGE_PATH "/tmp/server/messages.lst" 
+
 int messages_count = 0;  
 message_format messages[MAX_MESSAGES_STORED];
 

@@ -5,6 +5,7 @@ CFLAGS += -I../common
 # CFLAGS += -I../utils/cJSON
 CFLAGS += -I../utils/
 LDLIBS = -lwebsockets
+LDLIBS += -lpthread
 
 server: server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o
 	$(CC) $(CFLAGS) -o server  server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o $(LDLIBS)

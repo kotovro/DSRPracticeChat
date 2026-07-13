@@ -206,7 +206,7 @@ int main(int argc, char **argv) {
                 break;    
             case 'h':
             default:
-                fprintf(stderr, "Использование: %s [-s server_ip] [-p server_port] [-d директория]\n", argv[0]);
+                fprintf(stderr, "Использование: %s [-s server_ip] [-p server_port] [-d logs_directory]\n", argv[0]);
                 return opt == 'h' ? 0 : 1;
         }
     }

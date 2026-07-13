@@ -18,40 +18,35 @@ bool validate_username(const char *username) {
     return true;
 }
 
-bool login(message_format *msg, client_data *data) {
+int login(message_format *msg) {
     if (msg == NULL 
-        || data == NULL 
         || msg->type != COMMAND
         || strlen(msg->text) <= LOGIN_COMMAND_LEN
         || strncmp(msg->text, LOGIN_COMMAND, LOGIN_COMMAND_LEN) != 0) {
-        return false;
+        return -1;
     }
     size_t name_len = strlen(msg->text) - LOGIN_COMMAND_LEN;
     if (name_len >= MAX_NAME_LEN) name_len = MAX_NAME_LEN - 1;
     
     if (!validate_username(msg->text + LOGIN_COMMAND_LEN)) {
-        return false; // Имя пользователя не прошло валидацию
+        return -1; // Имя пользователя не прошло валидацию
     }
 
     int user_id = find_user_by_name(msg->text + LOGIN_COMMAND_LEN);
-    
     if (user_id <= 0) {
         int group_id = find_group_by_name(msg->text + LOGIN_COMMAND_LEN);
         if (group_id >= 0) {
-            return false;
+            return -1;
         }
         user_id = add_user(msg->text + LOGIN_COMMAND_LEN);
         if (user_id <= 0) {
-            return false;
+            return -1;
         }
-    } else {
-        return false;
     }
 
-    data->user_id = user_id;
-    printf("Клиент сменил имя на: %s, id %d, %d \n", msg->text + LOGIN_COMMAND_LEN, data->user_id, user_id);
+    printf("Клиент сменил имя на: %s, id  %d \n", msg->text + LOGIN_COMMAND_LEN, user_id);
 
     // Здесь можно добавить логику для обработки логина клиента
     // Например, проверка имени пользователя, сохранение в базе данных и т.д.
-    return true;
+    return user_id;
 }

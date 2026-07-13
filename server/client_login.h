@@ -8,7 +8,7 @@
 #include "user_storage.h"
 
 
-bool login(message_format *login_info, client_data *data);
+int login(message_format *login_info);
 
 #endif // CLIENT_LOGIN_H
 

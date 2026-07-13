@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include "settings.h"
 #include "commons.h"
 #include "client_login.h"
@@ -16,13 +17,97 @@
 struct server_storage {
     int client_count;
     struct client_data *clients[MAX_CLIENTS];
-    struct group_data *groups[MAX_GROUPS];
     char buffer[LWS_PRE + sizeof(message_format)];
     size_t msg_len;
 };
 
 static struct server_storage chat_server;
 static char logs_dir[512] = "/tmp/chat_server/";
+
+static pthread_mutex_t lock_tx;
+static int force_exit = 0;
+
+// Удаляет \n в конце строки
+static void trim_newline(char *s) {
+    s[strcspn(s, "\n")] = 0;
+}
+
+// Проверка на пустую строку
+static int is_empty(const char *s) {
+    return s == NULL || s[0] == '\0';
+}
+
+static int parse_input(char *input) {
+    input = ltrim(rtrim(input));   
+    if (input[0] != '/') {
+        return 1;
+    }
+    input++; // пропускаем символ '/'
+    if (strcmp(input, "clients") == 0) {
+       
+        printf("Всего подключено %d клиентов\n", chat_server.client_count);
+        for (int i = 0; i < chat_server.client_count; i++) { 
+            char ip[128];
+            if (lws_get_peer_simple(chat_server.clients[i]->wsi, ip, sizeof(ip)) != NULL) {
+                  printf("Клиент %s : ip - %s \n", get_user_by_id(chat_server.clients[i]->user_id)->username, ip);
+            }
+        } 
+        return 0;
+    }
+
+    if (strcmp(input, "chats") == 0) {
+        printf("%s", "Активные чаты-группы: \n");
+        int group_id = iterate_groups(-1);
+        while (group_id >= 0) { 
+            group_data *group = get_group_by_id(group_id);
+            for (int i = 0; i < group->members_count; i++) {
+                bool can_break = false;
+                for (int j = 0; j < chat_server.client_count; j++) { 
+                    if (chat_server.clients[j]->user_id == group->members_list[i]) {
+                        printf("%s \n", group->group_name);
+                        can_break = true;
+                        break;
+                    }
+                }
+                if (can_break) {
+                    break;
+                }
+            }
+            group_id = iterate_groups(group_id);
+        }
+        
+        return 0;
+    } 
+
+    if (strcmp(input, "exit") == 0) {
+        force_exit = 1;
+        return 0;
+    }
+    return 1;
+}
+
+// Функция-поток для чтения ввода пользователя из консоли
+void *console_input_thread(void *arg) {
+    (void)arg;
+    char input[MAX_MSG_LEN];
+
+    while (!force_exit) {
+        if (fgets(input, sizeof(input), stdin) != NULL) {
+            // Удаляем символ переноса строки \n
+            trim_newline(input);
+
+            if (is_empty(input))
+                continue;
+
+            int error = parse_input(input);
+            if (error) {
+                printf("Неизвестная команда.\n");
+                continue;
+            }
+        }
+    }
+    return NULL;
+}
 
 void queue_message_for_client(client_data *client, const message_format *msg) {
     if (!client || (client->first_message + client->queue_count) >= MAX_QUEUE) return;
@@ -164,7 +249,21 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
             }
 
             if (!(vhd->user_id > 0)) {
-                if (login(msg, vhd)) {
+                int user_id = login(msg);
+                printf("user id is: %d \n", user_id);
+                if (user_id > 0) { //мы разрешаем только один одновременный логин
+                    bool is_already_logged = false;
+                    for (int i = 0; i < chat_server.client_count; i++) {
+                        if (chat_server.clients[i]->user_id == user_id) {
+                            is_already_logged = true;  
+                            break;
+                        }
+                    }
+                    if (!is_already_logged) {
+                        vhd->user_id = user_id;
+                    }
+                }
+                if (vhd->user_id > 0) {
                     char *username = get_user_by_id(vhd->user_id)->username;
                     char welcome_msg[MAX_NAME_LEN + strlen(WELCOME_MESSAGE) + 1];
                     snprintf(welcome_msg, sizeof(welcome_msg), 
@@ -280,6 +379,7 @@ int main(int argc, char **argv) {
     init_user_storage();
     struct lws_context_creation_info info;
     struct lws_context *context;
+    pthread_t input_th;
     int opt;
     int port = SERVER_PORT; // Порт по умолчанию
     
@@ -301,11 +401,12 @@ int main(int argc, char **argv) {
                 break;  
             case 'h':
             default:
-                fprintf(stderr, "Использование: %s [-p server_port]\n", argv[0]);
+                fprintf(stderr, "Использование: %s [-p server_port] [-d logs_directory]\n", argv[0]);
                 return opt == 'h' ? 0 : 1;
         }
     }
 
+    pthread_mutex_init(&lock_tx, NULL);
 
     memset(&info, 0, sizeof(info));
     info.port = port;                // Порт сервера
@@ -322,14 +423,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Запускаем поток для чтения ввода пользователя
+    if (pthread_create(&input_th, NULL, console_input_thread, NULL) != 0) {
+        fprintf(stderr, "Ошибка создания потока ввода\n");
+        lws_context_destroy(context);
+        return 1;
+    }
+
     printf("Сервер чата запущен на порту %d...\n", port);
 
     // Главный бесконечный цикл обработки событий (Event Loop)
-    while (1) {
+    while (!force_exit) {
         // Таймаут 50 мс означает частоту опроса сокетов
         lws_service(context, 50);
     }
 
+    pthread_cancel(input_th);
+    pthread_join(input_th, NULL);
+    pthread_mutex_destroy(&lock_tx);
     lws_context_destroy(context);
     return 0;
 }
