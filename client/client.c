@@ -176,6 +176,15 @@ static struct lws_protocols protocols[] = {
     { NULL, NULL, 0, 0, 0, NULL, 0 }
 };
 
+static const struct lws_extension extensions[] = {
+    {
+        "permessage-deflate",
+        lws_extension_callback_pm_deflate, // Встроенный callback сжатия в LWS
+        "permessage-deflate; client_no_context_takeover; client_max_window_bits"
+    },
+    { NULL, NULL, NULL /* конец списка */ }
+};
+
 int main(int argc, char **argv) {
     struct lws_context_creation_info info;
     struct lws_context *context;
@@ -237,6 +246,7 @@ int main(int argc, char **argv) {
     ccinfo.host = ccinfo.address;
     ccinfo.origin = ccinfo.address;
     ccinfo.protocol = protocols[0].name; // "chat-protocol"
+    ccinfo.client_exts = extensions; 
 
     // Инициируем подключение
     if (!lws_client_connect_via_info(&ccinfo)) {

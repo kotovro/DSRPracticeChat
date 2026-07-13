@@ -375,6 +375,16 @@ static struct lws_protocols protocols[] = {
     { NULL, NULL, 0, 0, 0, NULL, 0 } // Явный маркер конца списка для всех полей
 };
 
+static const struct lws_extension extensions[] = {
+    {
+        "permessage-deflate",
+        lws_extension_callback_pm_deflate, // Встроенный callback сжатия в LWS
+        "permessage-deflate; client_no_context_takeover; client_max_window_bits"
+    },
+    { NULL, NULL, NULL /* конец списка */ }
+};
+
+
 int main(int argc, char **argv) {
     init_user_storage();
     struct lws_context_creation_info info;
@@ -413,6 +423,8 @@ int main(int argc, char **argv) {
     info.protocols = protocols;      // Массив протоколов
     info.gid = -1;
     info.uid = -1;
+    // Передаем расширения серверу
+    info.extensions = extensions;
 
     mkdir_p(logs_dir, 0755);
     // Создаем контекст сервера
