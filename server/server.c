@@ -386,7 +386,17 @@ static const struct lws_extension extensions[] = {
 
 
 int main(int argc, char **argv) {
-    init_user_storage();
+    char log_message[LOG_MESSAGE_LEN]; 
+    int users = init_user_storage();
+    snprintf(log_message, LOG_MESSAGE_LEN, "Хранищище пользователей проинциализировано. В нем %d пользователнй\n", users);
+    server_log(log_message);
+    int messages = init_message_storage();
+    snprintf(log_message, LOG_MESSAGE_LEN, "Хранищище сообщений проинциализировано. В нем %d сообщений\n", messages);
+    server_log(log_message);
+    int groups = init_group_storage();
+    snprintf(log_message, LOG_MESSAGE_LEN, "Хранищище групп проинциализировано. В нем %d групп\n", groups);
+    server_log(log_message);
+
     struct lws_context_creation_info info;
     struct lws_context *context;
     pthread_t input_th;
