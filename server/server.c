@@ -302,9 +302,40 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 // Рассылаем сообщение
                 route_message(msg, vhd, NULL);
             } else if (msg->type == COMMAND) {
-                // Обработка команд
-                message_format result = try_execute_command(msg->text, msg->destination, vhd);
-                route_message(&result, vhd, NULL); // Отправляем результат
+                if (strcmp(msg->text, "delete_all") == 0) {
+                    int deleter_id = vhd->user_id;
+                    if (!get_user_by_id(deleter_id)->is_moderator) {
+                        strcpy(msg->text, "У Вас недостаточно прав для удаления данного сообщения.");
+                        strcpy(msg->destination, get_user_by_id(vhd->user_id)->username);
+                        route_message(msg, vhd, NULL);
+                        break;
+                    }
+                    int user_id = find_user_by_name(msg->destination);
+                    if (user_id > 0) {
+                        message_format *message_to_delete = get_message_by_source(msg->destination);
+                        while (message_to_delete != NULL) {
+                            delete_message(message_to_delete);
+                            strcpy(msg->text, "Сообщение удалено.");
+                            route_message(msg, vhd, NULL);
+                            message_to_delete = get_message_by_source(msg->destination);
+                        }
+                    } else {
+                        int group_id = find_group_by_name(msg->destination);
+                        if (group_id > 0) {
+                            message_format *message_to_delete = get_message_by_destination(msg->destination);
+                            while (message_to_delete != NULL) {
+                                delete_message(message_to_delete);
+                                strcpy(msg->text, "Сообщение удалено.");
+                                route_message(msg, vhd, NULL);
+                                message_to_delete = get_message_by_destination(msg->destination);
+                            }
+                        } 
+                    }
+                } else {
+                    // Обработка команд
+                    message_format result = try_execute_command(msg->text, msg->destination, vhd);
+                    route_message(&result, vhd, NULL); // Отправляем результат
+                }
             }
             
             break;

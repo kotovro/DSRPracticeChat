@@ -47,6 +47,27 @@ message_format *get_message_by_id(char *guid) {
     return NULL;
 }
 
+message_format *get_message_by_source(char *source) {
+    int last_index = messages_count > MAX_MESSAGES_STORED ? MAX_MESSAGES_STORED : messages_count;
+    for (int i = 0; i < last_index; i++) {
+        if (strcmp(messages[i].source, source) == 0 && messages[i].time_deleted == 0) {
+            return messages + i;
+        }
+    }
+    return NULL;
+}
+
+message_format *get_message_by_destination(char *destination) {
+    int last_index = messages_count > MAX_MESSAGES_STORED ? MAX_MESSAGES_STORED : messages_count;
+    for (int i = 0; i < last_index; i++) {
+        if (strcmp(messages[i].destination, destination) == 0 && messages[i].time_deleted == 0) {
+            return messages + i;
+        }
+    }
+    return NULL;
+}
+
+
 void edit_message_text(message_format *msg_to_edit, char *new_text) {
     strcpy(msg_to_edit->text, new_text);
     msg_to_edit->time_modified = time(NULL);
@@ -58,6 +79,7 @@ void delete_message(message_format *msg_to_delete) {
     printf("delte message %s", msg_to_delete->message_guid);
     commit();
 }
+
 
 int init_message_storage() {
     mkdir_p(MESSAGE_STORAGE_PATH, 0755);
