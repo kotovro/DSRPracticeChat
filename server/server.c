@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <pthread.h>
 #include "settings.h"
 #include "commons.h"
@@ -134,8 +135,13 @@ void broadcast_message(const message_format *message, client_data *exclude) {
     }
 }
 
-void direct_message(client_data *client, const message_format *message) { 
-    queue_message_for_client(client, message);
+void direct_message(int user_id, const message_format *message) { 
+    for (int i = 0; i < chat_server.client_count; i++) {
+        if (chat_server.clients[i]->user_id == user_id) {  
+            queue_message_for_client(chat_server.clients[i], message);
+            break;
+        }
+    }
 }
 
 void group_message(group_data* group_info, message_format *message, client_data *exclude) {
@@ -173,14 +179,12 @@ void route_message(message_format *message, client_data *source, client_data *ex
     }
     int user_id = find_user_by_name(message->destination);
     if (user_id > 0) {
-        for (int i = 0; i < chat_server.client_count; i++) {
-            if (chat_server.clients[i]->user_id == user_id) {  
-                direct_message(chat_server.clients[i], message);
-                break;
-            }       
-        }
+        direct_message(user_id, message);    
         if (!is_from_server) {
-            direct_message(source, message);
+            user_id = find_user_by_name(message->source);
+            if (user_id > 0) {
+                direct_message(user_id, message);
+            }
         }
         return;
     }
@@ -272,7 +276,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     
                     message_format welcome_msg_struct = create_server_message(LOGIN_SUCCESS, username);
                     strcpy(welcome_msg_struct.text, welcome_msg);
-                    direct_message(vhd, &welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
+                    queue_message_for_client(vhd, &welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
                     
                     char join_msg[MAX_NAME_LEN + strlen(JOIN_MESSAGE) + 1];
                     snprintf(join_msg, sizeof(join_msg), 
@@ -289,7 +293,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                                                     LOGIN_FAIL_MESSAGE);
                     message_format welcome_msg_struct = create_server_message(TEXT, username);
                     strcpy(welcome_msg_struct.text, login_fail_msg);
-                    direct_message(vhd, &welcome_msg_struct);
+                    queue_message_for_client(vhd, &welcome_msg_struct);
                 }
                 break;// Не рассылаем эту команду в чат
             }
@@ -386,6 +390,8 @@ static const struct lws_extension extensions[] = {
 
 
 int main(int argc, char **argv) {
+    srand((unsigned)time(NULL));
+
     char log_message[LOG_MESSAGE_LEN]; 
     int users = init_user_storage();
     snprintf(log_message, LOG_MESSAGE_LEN, "Хранищище пользователей проинциализировано. В нем %d пользователнй\n", users);

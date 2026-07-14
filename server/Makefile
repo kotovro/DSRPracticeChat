@@ -7,9 +7,9 @@ CFLAGS += -I../utils/
 LDLIBS = -lwebsockets
 LDLIBS += -lpthread
 
-server: server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o
+server: server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o 
 	$(CC) $(CFLAGS) -o server  server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o $(LDLIBS)
-
+ 
 server.o: server.c
 	$(CC) $(CFLAGS) -c server.c
 
@@ -25,6 +25,9 @@ user_storage.o: user_storage.c
 group_storage.o: group_storage.c
 	$(CC) $(CFLAGS) -c group_storage.c
 
+# delete_all_messages.o: delete_all_messages.c
+# 	$(CC) $(CFLAGS) -c delete_all_messages.c -o delete_all_messages.o
+
 message_storage.o: message_storage.c
 	$(CC) $(CFLAGS) -c message_storage.c
 
@@ -33,6 +36,7 @@ utils.o: ../utils/utils.c
 
 server_utils.o: ../utils/server_utils.c
 	$(CC) $(CFLAGS) -c ../utils/server_utils.c -o server_utils.o
+
 
 .PHONY: clean
 

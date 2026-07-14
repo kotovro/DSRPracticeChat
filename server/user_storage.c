@@ -41,8 +41,6 @@ user_data *get_user_by_id(int id) {
 }
 
 int init_user_storage() {
-    user_count = 1;
-    strcpy(users[0].username, "Незарегистрированный пользователь");
 
     mkdir_p(USER_STORAGE_PATH, 0755);
     FILE *fptr;
@@ -50,7 +48,9 @@ int init_user_storage() {
     fptr = fopen(USER_STORAGE_FILE, "r");
 
     if (fptr == NULL) {
-        printf("Ошибка открытия файла.\n");
+        printf("Ошибка открытия файла с пользователями.\n");
+        user_count = 1;
+        strcpy(users[0].username, "Незарегистрированный пользователь");
         return 0;
     }
 
@@ -94,6 +94,11 @@ int add_user(char *username) {
 }
 
 void change_user_mute(int user_id, bool is_muted) {
-    commit();
     users[user_id].is_global_chat_disabled = is_muted;
+    commit();
+}
+
+void change_user_global_ban(int user_id, bool is_banned) {
+    users[user_id].is_global_chat_banned = is_banned;
+    commit();
 }
