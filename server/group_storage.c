@@ -99,7 +99,7 @@ int init_group_storage() {
     fptr = fopen(GROUP_STORAGE_FILE, "r");
 
     if (fptr == NULL) {
-        printf("Ошибка открытия файла.\n");
+        printf("Ошибка открытия файла с группами.\n");
         return 0;
     }
 
@@ -137,4 +137,10 @@ int init_group_storage() {
         }
     }
     return groups_count;
+}
+
+void ban_user_in_group(int user_id, int group_id) {
+    groups[group_id].banned_users_list[groups[group_id].banned_users_count] = user_id;
+    groups[group_id].banned_users_count++;
+    commit();
 }

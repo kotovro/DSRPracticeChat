@@ -11,5 +11,6 @@ bool is_user_banned_in_group(int user_id, int group_id);
 group_data *get_group_by_id(int group_id);
 int iterate_groups(int current_id);
 int init_group_storage();
+void ban_user_in_group(int user_id, int group_id);
 
 #endif //GROUP_STORAGE_H

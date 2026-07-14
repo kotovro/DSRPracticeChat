@@ -120,11 +120,15 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
                 "%Y-%m-%d %H:%M:%S", local);
             snprintf(log_message, LOG_MESSAGE_LEN, "%s %s {%s} [%s] для [%s]: %s\n",
                     timestamp,
-                    msg->time_modified > 0 ? "Изменено сообщение" : "", 
+                    msg->time_deleted > 0
+                        ? "Удалено сообщение"  
+                        : msg->time_modified > 0 
+                            ? "Изменено сообщение" 
+                            : "", 
                     msg->message_guid, 
                     msg->source, 
                     msg->destination, 
-                    msg->text);
+                    msg->time_deleted > 0 ? "" : msg->text);
             printf("%s", log_message);
             write_to_log(log_message, logs_dir);
 
