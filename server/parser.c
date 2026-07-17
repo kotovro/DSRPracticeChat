@@ -5,6 +5,7 @@
 #include "user_storage.h"
 #include "group_storage.h"
 #include "message_storage.h"
+#include "file_storage.h"
 
 message_format try_execute_command(const char *command, const char *destination, client_data *client) {    
     message_format msg = create_server_message(TEXT, destination); 
@@ -167,7 +168,7 @@ message_format try_execute_command(const char *command, const char *destination,
         int error_type = 0;
         long long filesize;
         strcpy(msg.destination, get_user_by_id(client->user_id)->username);
-
+    
         token = strtok(NULL, " ");
         if (token == NULL) {
             error_type = 1;
@@ -198,7 +199,8 @@ message_format try_execute_command(const char *command, const char *destination,
             client->pending_filesize = filesize;
             strcpy(client->pending_token, msg.message_guid);
             client->has_pending_upload = true;
-            sprintf(msg.text, "upload/%s", msg.message_guid);
+            sprintf(msg.text, "url:/upload/%s|file:%s", msg.message_guid, client->pending_filename);
+            add_file_mapping(msg.message_guid, client->pending_filename, get_user_by_id(client->user_id)->username, destination);
             return msg;
         } 
         if (error_type == 1) {

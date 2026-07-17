@@ -10,7 +10,8 @@ typedef enum {
     TEXT,
     COMMAND,
     LOGIN_SUCCESS, 
-    FILE_UPLOAD_ACK
+    FILE_UPLOAD_ACK,
+    FILE_UPLOAD_ANNOUNCE
 } message_type;
 
 typedef struct message_format {

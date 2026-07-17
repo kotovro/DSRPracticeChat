@@ -9,6 +9,7 @@
 #include "client_login.h"
 #include "parser.h"
 #include "utils.h"
+#include "file_storage.h" 
 #include "server_utils.h"
 #include "user_storage.h"
 #include "group_storage.h"
@@ -24,10 +25,17 @@ struct server_storage {
 
 static struct server_storage chat_server;
 static char logs_dir[512] = "/tmp/chat_server/";
-// static char files_dir[512] = "/tmp/chat_server/";
 
 static pthread_mutex_t lock_tx;
 static int force_exit = 0;
+
+// Структура сессии для HTTP-запроса (выделяется для каждого скачивания/загрузки)
+typedef struct {
+    FILE *fp;
+    char file_guid[GUID_LEN + 1];
+    int is_upload;
+}  per_session_data__http;
+
 
 // Удаляет \n в конце строки
 static void trim_newline(char *s) {
@@ -111,12 +119,12 @@ void *console_input_thread(void *arg) {
     return NULL;
 }
 
-void queue_message_for_client(client_data *client, const message_format *msg) {
+void queue_message_for_client(client_data *client, const message_format msg) {
     if (!client || (client->first_message + client->queue_count) >= MAX_QUEUE) return;
 
     // Записываем сообщение в текущий свободный слот очереди с отступом LWS_PRE
     int slot = client->first_message + client->queue_count;
-    client->queue[slot].message = *msg;
+    client->queue[slot].message = msg;
     client->queue_count++;
 
     // Просим lws вызвать событие WRITEABLE для этого клиента
@@ -124,10 +132,10 @@ void queue_message_for_client(client_data *client, const message_format *msg) {
 }
 
 // Функция для отправки сообщения всем активным клиентам
-void broadcast_message(const message_format *message, client_data *exclude) {
+void broadcast_message(const message_format message, client_data *exclude) {
     char buf[7];
     snprintf(buf, 6, "%d", exclude ? exclude->user_id : 0);
-    printf("Рассылаем сообщение от %s всем клиентам (кроме %s)\n", message->source, exclude ? buf : "никого");
+    printf("Рассылаем сообщение от %s всем клиентам (кроме %s)\n", message.source, exclude ? buf : "никого");
     for (int i = 0; i < chat_server.client_count; i++) {
         if (chat_server.clients[i] && (exclude == NULL || chat_server.clients[i] != exclude)
             && !get_user_by_id(chat_server.clients[i]->user_id)->is_global_chat_disabled) {
@@ -136,7 +144,7 @@ void broadcast_message(const message_format *message, client_data *exclude) {
     }
 }
 
-void direct_message(int user_id, const message_format *message) { 
+void direct_message(int user_id, const message_format message) { 
     for (int i = 0; i < chat_server.client_count; i++) {
         if (chat_server.clients[i]->user_id == user_id) {  
             queue_message_for_client(chat_server.clients[i], message);
@@ -145,7 +153,7 @@ void direct_message(int user_id, const message_format *message) {
     }
 }
 
-void group_message(group_data* group_info, message_format *message, client_data *exclude) {
+void group_message(group_data* group_info, message_format message, client_data *exclude) {
     for (int i = 0; i < chat_server.client_count; i++) {
         if (chat_server.clients[i] == exclude) {
             continue;
@@ -159,16 +167,16 @@ void group_message(group_data* group_info, message_format *message, client_data 
     }
 }
 
-void route_message(message_format *message, client_data *source, client_data *exclude) {
-    bool is_from_server = strcmp(message->source, SERVER_NAME) == 0; 
-    if (strcmp(message->destination, GLOBAL_CHAT_NAME) == 0) {
+void route_message(message_format message, client_data *source, client_data *exclude) {
+    bool is_from_server = strcmp(message.source, SERVER_NAME) == 0; 
+    if (strcmp(message.destination, GLOBAL_CHAT_NAME) == 0) {
         user_data *user = is_from_server ? NULL : get_user_by_id(source->user_id);
         if (is_from_server || (source->user_id > 0 && user != NULL && !user->is_global_chat_banned)) {
             broadcast_message(message, exclude);
         }
         return;
     }
-    int group_id = find_group_by_name(message->destination); 
+    int group_id = find_group_by_name(message.destination); 
     if (group_id >= 0) {
         group_data *group = get_group_by_id(group_id);  
         if (is_from_server || !is_user_banned_in_group(source->user_id, group_id)) {
@@ -176,11 +184,11 @@ void route_message(message_format *message, client_data *source, client_data *ex
         } 
         return; 
     }
-    int user_id = find_user_by_name(message->destination);
+    int user_id = find_user_by_name(message.destination);
     if (user_id > 0) {
         direct_message(user_id, message);    
         if (!is_from_server) {
-            user_id = find_user_by_name(message->source);
+            user_id = find_user_by_name(message.source);
             if (user_id > 0) {
                 direct_message(user_id, message);
             }
@@ -194,134 +202,124 @@ void server_log(char *server_signal) {
     printf("%s", server_signal);        
 }
 
-// // Функция-триггер: она вызываеися из WebSocket коллбэка, когда пришла команда upload
-// int trigger_file_upload(struct lws_context *ctx, const char *filepath, int target_msg_id) {
-//     char log_message[LOG_MESSAGE_LEN];
-//     FILE *fp = fopen(filepath, "rb");
-//     if (!fp) {
-//         snprintf(log_message, LOG_MESSAGE_LEN, "Не удалось открыть файл для загрузки: %s\n", filepath);
-//         server_log(log_message);
-//         return -1;
-//     }
-
-//     // Измеряем файл
-//     fseek(fp, 0, SEEK_END);
-//     size_t fsize = ftell(fp);
-//     fseek(fp, 0, SEEK_SET);
-
-//     struct lws_client_connect_info ccinfo;
-//     memset(&ccinfo, 0, sizeof(ccinfo));
+static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reason,
+                              void *user, void *in, size_t len) {
+    per_session_data__http *pss = (per_session_data__http *)user;
     
-//     ccinfo.context = ctx;
-//     ccinfo.address = "127.0.0.1";
-//     ccinfo.port = 8080;
-//     ccinfo.ssl_connection = 0;
-//     ccinfo.path = "/upload";
-//     ccinfo.host = ccinfo.address;
-//     ccinfo.origin = ccinfo.address;
-//     ccinfo.method = "POST";
-    
-//     ccinfo.protocol = "http_file_tranfer-protocol"; 
+    // Буферы для формирования HTTP-ответа
+    uint8_t buf[LWS_PRE + 512];
+    uint8_t *p = &buf[LWS_PRE];
+    uint8_t *start = p;
+    uint8_t *end = p + sizeof(buf) - LWS_PRE;
 
-//     // Создаем асинхронное HTTP-соединение
-//     struct lws *http_wsi = lws_client_connect_via_info(&ccinfo);
-//     if (!http_wsi) {
-//         snprintf(log_message, LOG_MESSAGE_LEN, "Ошибка создания асинхронного HTTP-соединения\n");
-//         server_log(log_message);
-//         fclose(fp);
-//         return -1;
-//     }
+    time_t time_now = time(NULL);
+    struct tm *local = localtime(&time_now); 
+    char timestamp[20];
+    strftime(timestamp, sizeof timestamp, "%Y-%m-%d %H:%M:%S", local);
+    char log_message[LOG_MESSAGE_LEN];        
 
-//     // Достаем автоматически выделенную структуру и заполняем её
-//     struct http_client_session *pss = (struct http_client_session *)lws_wsi_user(http_wsi);
-//     if (pss) {
-//         pss->fp = fp;
-//         pss->file_size = fsize;
-//         pss->sent_bytes = 0;
-//         pss->msg_id = target_msg_id; // Привязали ID сообщения из чата!
-//         pss->state = 0;
-//     }
+    switch (reason) {
+        case LWS_CALLBACK_HTTP: {
+            // 1. Проверяем, что это POST запрос
+            if (!lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI)) {
+                lws_return_http_status(wsi, HTTP_STATUS_METHOD_NOT_ALLOWED, NULL);
+                return -1;
+            }
 
-//     // Сразу запрашиваем у LWS событие на запись для этого HTTP-соединения
-//     lws_callback_on_writable(http_wsi);
-    
-//     snprintf(log_message, LOG_MESSAGE_LEN, "Асинхронная загрузка файла %s запущена параллельно с чатом.\n", filepath);
-//     server_log(log_message);
-//     return 0;
-// }
+            // 2. Извлекаем URI (например, "/upload/550e8400-e29b-41d4-a716-446655440000")
+            const char *uri = (const char *)in;
+            sprintf(log_message, "Получен HTTP POST запрос на URI: %s\n", uri);
+            server_log(log_message);
 
-// static int callback_http_file(struct lws *wsi, enum lws_callback_reasons reason,
-//                               void *user, void *in, size_t len) {
-//     // struct file_upload_session *pss = (struct file_upload_session *)user;
-//     // char log_message[LOG_MESSAGE_LEN];
-//     // switch (reason) {
-//     //     case LWS_CALLBACK_HTTP_BODY: {
-//     //         if (!pss) break;
-
-//     //         // Сюда прилетают сырые куски HTTP-тела (включая multipart обертку)
-//     //         // Примечание: Для продакшена здесь используется lws_spa (парсер multipart формы).
-//     //         // Для простоты примера мы просто пишем входящий бинарный поток в файл.
-//     //         if (!pss->dest_fp) {
-//     //             char path[256];
-//     //             snprintf(path, sizeof(path), "server_received_%ld.dat", (long)wsi);
-//     //             pss->dest_fp = fopen(path, "wb");
-//     //             if (!pss->dest_fp) {
-                    
-//     //                 snprintf(log_message, M("Не удалось создать файл на сервере.\n");
-//     //                 return -1;
-//     //             }
-//     //             lwsl_user("[HTTP] Создан файл для приема: %s\n", path);
-//     //         }
-
-//     //         if (pss->dest_fp && len > 0) {
-//     //             fwrite(in, 1, len, pss->dest_fp);
-//     //             pss->received_bytes += len;
-//     //             lwsl_user("[HTTP] Принято чанком: %zu байт (Всего: %zu)\n", len, pss->received_bytes);
-//     //         }
-//     //         break;
-//     //     }
-
-//     //     case LWS_CALLBACK_HTTP_BODY_COMPLETION:
-//     //         lwsl_user("[HTTP] Загрузка файла полностью завершена!\n");
-//     //         if (pss && pss->dest_fp) {
-//     //             fclose(pss->dest_fp);
-//     //             pss->dest_fp = NULL;
-//     //         }
+            // Проверяем формат URI и парсим GUID
+            // Формат парсинга ожидает ровно 36 символов GUID (буквы, цифры и дефисы)
             
-//     //         // Отправляем клиенту HTTP-ответ "200 OK"
-//     //         unsigned char buffer[LWS_PRE + 256];
-//     //         unsigned char *p = &buffer[LWS_PRE];
-//     //         unsigned char *end = &buffer[sizeof(buffer) - 1];
+            if (sscanf(uri, "/upload/%36[0-9a-zA-Z-]", pss->file_guid) == 1 && 
+                strlen(pss->file_guid) == 36 && file_mapping_exsts(pss->file_guid)) {
+                pss->is_upload = 1;
             
-//     //         if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end) ||
-//     //             lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE, (unsigned char *)"text/plain", 10, &p, end) ||
-//     //             lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH, (unsigned char *)"2", 1, &p, end) ||
-//     //             lws_finalize_http_header(wsi, &p, end)) {
-//     //             return -1;
-//     //         }
-            
-//     //         *p++ = 'O'; *p++ = 'K'; // Тело ответа
-//     //         lws_write(wsi, &buffer[LWS_PRE], p - &buffer[LWS_PRE], LWS_WRITE_HTTP);
-            
-//     //         // Переводим сокет в режим закрытия со стороны HTTP
-//     //         if (lws_http_transaction_completed(wsi)) return -1;
-//     //         break;
+                // 3. Формируем имя файла на диске сервера
+                int err = create_file(pss->file_guid, &pss->fp);
+                if (err) {
+                    lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
+                    return -1;    
+                } 
+                sprintf(log_message, "Файл %s успешно создан. Ожидаем поток данных...\n", pss->file_guid);
+                server_log(log_message);
+            } else {
+                // Неверный формат URL или отсутствует GUID
+                lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
+                return -1;
+            }
+            break;
+        }
 
-//     //     case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
-//     //         // Безопасная очистка ресурсов, если клиент резко оборвал связь
-//     //         if (pss && pss->dest_fp) {
-//     //             fclose(pss->dest_fp);
-//     //             pss->dest_fp = NULL;
-//     //             lwsl_user("[HTTP] Соединение разорвано, файл закрыт.\n");
-//     //         }
-//     //         break;
+        case LWS_CALLBACK_HTTP_BODY:
+            // 4. Срабатывает неблокирующе по мере прихода порций байтов из сети
+            if (pss->is_upload && pss->fp && len > 0) {
+                size_t written = fwrite(in, 1, len, pss->fp);
+                if (written < len) {
+                    sprintf(log_message, "Ошибка записи файла %s! Место закончилось?\n", pss->file_guid);
+                    server_log(log_message);
+                    fclose(pss->fp);
+                    pss->fp = NULL;
+                    return -1;
+                }
+            }
+            break;
 
-//     //     default:
-//     //         break;
-//     // }
-//     // // Для стандартных HTTP запросов (например GET /), если они не обрабатываются в BODY
-//     // return lws_callback_http_dummy(wsi, reason, user, in, len);
-// }
+        case LWS_CALLBACK_HTTP_BODY_COMPLETION:
+            // 5. Все байты файла успешно получены
+            if (pss->is_upload && pss->fp) {
+                fclose(pss->fp);
+                pss->fp = NULL;
+                sprintf(log_message, "Загрузка файла %s полностью завершена!\n", pss->file_guid);
+                server_log(log_message);
+                file_name_mapping *file_mapping = get_file_by_localname(pss->file_guid);
+                if (file_mapping != NULL) {
+                    int user_id = find_user_by_name(file_mapping->source);
+                    if (user_id > 0) {
+                        for (int i = 0; i < chat_server.client_count; i++) {
+                            if (chat_server.clients[i]->user_id == user_id) {
+                                message_format message = {0};
+                                message.type = FILE_UPLOAD_ANNOUNCE;
+                                strcpy(message.source, file_mapping->source);
+                                strcpy(message.destination, file_mapping->destination); 
+                                generate_uuid(message.message_guid);
+                                update_file_mapping(pss->file_guid, message.message_guid);
+                                sprintf(message.text, "Пользователь поделился файлом %s", file_mapping->clientname);
+                                route_message(message, chat_server.clients[i], NULL);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+           
+            // 6. Отправляем клиенту стандартный HTTP-ответ "200 OK"
+            if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end)) return 1;
+            if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE, 
+                (unsigned char *)"text/plain", 10, &p, end)) return 1;
+            if (lws_finalize_http_header(wsi, &p, end)) return 1;
+            
+            lws_write(wsi, start, p - start, LWS_WRITE_HTTP_HEADERS);
+            
+            // Закрываем HTTP-транзакцию (LWS сама корректно завершит соединение)
+            return lws_http_transaction_completed(wsi) ? -1 : 0;
+
+        case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
+            // Безопасность: если соединение оборвалось в процессе, закрываем дескриптор файла
+            if (pss->fp != NULL) {
+                fclose(pss->fp);
+                pss->fp = NULL;
+            }
+            break;
+
+        default:
+            break;
+    }
+    return 0;
+}
 
 // Главный обработчик событий (Callback) для протокола чата
 static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
@@ -334,6 +332,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
     struct client_data *vhd = (struct client_data *)user;
     char log_message[LOG_MESSAGE_LEN];        
 
+    printf("resoan is %d\n", reason);
     switch (reason) {
         
         // 1. Клиент успешно подключился
@@ -382,7 +381,6 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
 
             if (!(vhd->user_id > 0)) {
                 int user_id = login(msg);
-                printf("user id is: %d \n", user_id);
                 if (user_id > 0) { //мы разрешаем только один одновременный логин
                     bool is_already_logged = false;
                     for (int i = 0; i < chat_server.client_count; i++) {
@@ -404,7 +402,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     
                     message_format welcome_msg_struct = create_server_message(LOGIN_SUCCESS, username);
                     strcpy(welcome_msg_struct.text, welcome_msg);
-                    queue_message_for_client(vhd, &welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
+                    queue_message_for_client(vhd, welcome_msg_struct); // Отправляем приветственное сообщение только этому клиенту
                     
                     char join_msg[MAX_NAME_LEN + strlen(JOIN_MESSAGE) + 1];
                     snprintf(join_msg, sizeof(join_msg), 
@@ -413,7 +411,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     welcome_msg_struct.type = TEXT; 
                     strcpy(welcome_msg_struct.text, join_msg);
                     strcpy(welcome_msg_struct.destination, GLOBAL_CHAT_NAME);
-                    broadcast_message(&welcome_msg_struct, vhd); // Рассылаем всем клиентам сообщение о входе нового пользователя
+                    broadcast_message(welcome_msg_struct, vhd); // Рассылаем всем клиентам сообщение о входе нового пользователя
                 } else {
                     char *username = get_user_by_id(vhd->user_id)->username;
                     char login_fail_msg[MAX_NAME_LEN + strlen(LOGIN_FAIL_MESSAGE) + 1];
@@ -421,21 +419,21 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                                                     LOGIN_FAIL_MESSAGE);
                     message_format welcome_msg_struct = create_server_message(TEXT, username);
                     strcpy(welcome_msg_struct.text, login_fail_msg);
-                    queue_message_for_client(vhd, &welcome_msg_struct);
+                    queue_message_for_client(vhd, welcome_msg_struct);
                 }
                 break;// Не рассылаем эту команду в чат
             }
            
             if (msg->type == TEXT) {
                 // Рассылаем сообщение
-                route_message(msg, vhd, NULL);
+                route_message(*msg, vhd, NULL);
             } else if (msg->type == COMMAND) {
                 if (strcmp(msg->text, "delete_all") == 0) {
                     int deleter_id = vhd->user_id;
                     if (!get_user_by_id(deleter_id)->is_moderator) {
                         strcpy(msg->text, "У Вас недостаточно прав для удаления данного сообщения.");
                         strcpy(msg->destination, get_user_by_id(vhd->user_id)->username);
-                        route_message(msg, vhd, NULL);
+                        route_message(*msg, vhd, NULL);
                         break;
                     }
                     int user_id = find_user_by_name(msg->destination);
@@ -444,7 +442,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                         while (message_to_delete != NULL) {
                             delete_message(message_to_delete);
                             strcpy(msg->text, "Сообщение удалено.");
-                            route_message(msg, vhd, NULL);
+                            route_message(*msg, vhd, NULL);
                             message_to_delete = get_message_by_source(msg->destination);
                         }
                     } else {
@@ -454,7 +452,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                             while (message_to_delete != NULL) {
                                 delete_message(message_to_delete);
                                 strcpy(msg->text, "Сообщение удалено.");
-                                route_message(msg, vhd, NULL);
+                                route_message(*msg, vhd, NULL);
                                 message_to_delete = get_message_by_destination(msg->destination);
                             }
                         } 
@@ -462,7 +460,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 } else {
                     // Обработка команд
                     message_format result = try_execute_command(msg->text, msg->destination, vhd);
-                    route_message(&result, vhd, NULL); // Отправляем результат
+                    route_message(result, vhd, NULL); // Отправляем результат
                 }
             }
             
@@ -526,15 +524,15 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
 
 // Определение поддерживаемых протоколов
 static struct lws_protocols protocols[] = {
-    // {
-    //     .name = "http_file_tranfer-protocol",
-    //     .callback = callback_http_client,
-    //     .per_session_data_size = sizeof(http_client_session),
-    //     .rx_buffer_size = 4096,                            
-    //     .id = 0,                                           
-    //     .user = NULL,
-    //     .tx_packet_size = 0  
-    // },
+    {
+        .name = "http_file_tranfer-protocol",
+        .callback = callback_http_server,
+        .per_session_data_size = sizeof(per_session_data__http),
+        .rx_buffer_size = 4096,                            
+        .id = 0,                                           
+        .user = NULL,
+        .tx_packet_size = 0  
+    },
     { 
         .name = "chat-protocol", 
         .callback = callback_chat, 
@@ -609,6 +607,9 @@ int main(int argc, char **argv) {
     info.uid = -1;
     // Передаем расширения серверу
     info.extensions = extensions;
+    info.pt_serv_buf_size = 4096;          // Размер буфера обслуживания
+    info.max_http_header_pool = 16;        // Максимальное количество одновременных заголовков
+    info.max_http_header_data = 4096; 
 
     mkdir_p(logs_dir, 0755);
     // Создаем контекст сервера

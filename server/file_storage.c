@@ -1,5 +1,71 @@
-#ifndef FILE_STORAGE_H
-#define FILE_STORAGE_H
+#include <string.h>
+#include "file_storage.h"
+
+#define FILE_STORAGE_PATH "/tmp/server/" 
+
+int files_count = 0;  
+file_name_mapping files[MAX_FILES_STORED];
 
 
-#endif // FILE_STORAGE_H
+file_name_mapping *get_file_by_localname(char *name) {
+    int last_index = files_count >= MAX_FILES_STORED ? MAX_FILES_STORED : files_count;
+    for (int i = 0; i < last_index; i++) {
+        if (strcmp(files[i].localname, name) == 0) {
+            return files + i;        
+        }
+
+    }
+    return NULL;
+}
+
+file_name_mapping *get_file_by_sharedname(char *name) {
+    int last_index = files_count >= MAX_FILES_STORED ? MAX_FILES_STORED : files_count;
+    for (int i = 0; i < last_index; i++) {
+        if (strcmp(files[i].sharedname, name) == 0) {
+            return files + i;        
+        }
+    }
+    return NULL;
+}
+
+void get_filename_from_path(char *path, char *filename) {
+    char *fname = strrchr(path, '/');
+    if  (fname != NULL) {
+        strcpy(filename, fname);
+    }
+}
+
+void add_file_mapping(char *systemfilename, char *clientfilename, char *source, const char *destination) {
+    strcpy(files[files_count % MAX_FILES_STORED].localname, systemfilename);
+    strcpy(files[files_count % MAX_FILES_STORED].source, source);
+    strcpy(files[files_count % MAX_FILES_STORED].destination, destination);
+    get_filename_from_path(clientfilename, files[files_count % MAX_FILES_STORED].clientname);
+    files_count++;
+    //commit();
+}
+
+void update_file_mapping(char *systemfilename, char *sharedfilename) {
+    int last_index = files_count >= MAX_FILES_STORED ? MAX_FILES_STORED : files_count;
+    for (int i = 0; i < last_index; i++) {
+        if (strcmp(files[i].localname, systemfilename) == 0) {
+            strcpy(files[i].sharedname, sharedfilename);
+            return;        
+        }
+    }
+    //commit();
+}
+
+int create_file(char *system_filename, FILE **file_pointer) {
+    //Открываем файл на запись в бинарном режиме
+    char full_filename[MAX_FILENAME_LEN];
+    sprintf(full_filename, "%s%s", FILE_STORAGE_PATH, system_filename);
+    *file_pointer = fopen(full_filename, "wb");
+    if (*file_pointer == NULL) {
+        return -1;
+    }
+    return 0;
+}
+
+bool file_mapping_exsts(char *name) {
+    return get_file_by_localname(name) != NULL;
+}

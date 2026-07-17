@@ -7,8 +7,8 @@ CFLAGS += -I../utils/
 LDLIBS = -lwebsockets
 LDLIBS += -lpthread
 
-server: server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o 
-	$(CC) $(CFLAGS) -o server  server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o $(LDLIBS)
+server: server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o file_storage.o
+	$(CC) $(CFLAGS) -o server  server.o client_login.o utils.o parser.o server_utils.o user_storage.o group_storage.o message_storage.o file_storage.o $(LDLIBS)
  
 server.o: server.c
 	$(CC) $(CFLAGS) -c server.c
@@ -18,6 +18,9 @@ parser.o: parser.c
 
 client_login.o: client_login.c
 	$(CC) $(CFLAGS) -c client_login.c
+
+file_storage.o: file_storage.c
+	$(CC) $(CFLAGS) -c file_storage.c
 
 user_storage.o: user_storage.c
 	$(CC) $(CFLAGS) -c user_storage.c

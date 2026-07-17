@@ -10,12 +10,22 @@
 #include "commons.h"
 #include "utils.h"
 
-#define BOUNDARY "----LWSFormBoundaryABC123"
+#define CHUNK_SIZE 4096
+
+// Структура для хранения состояния отправки файла на клиенте
+typedef struct {
+    FILE *fp;
+    size_t total_size;
+    size_t sent_size;
+    char filename[MAX_FILENAME_LEN];
+} client_file_upload_data;
 
 // Глобальные переменные для управления состоянием
 static struct lws *web_socket = NULL;
 static int force_exit = 0;
 static char logs_dir[512] = "/tmp/chat_client/";
+char server_address[512] = SERVER_IP; // IP сервера по умолчанию
+int server_port = SERVER_PORT; // Порт по умолчанию
 
 // Буфер для отправки сообщений (с обязательным отступом LWS_PRE)
 static char tx_buffer[LWS_PRE + sizeof(message_format)];
@@ -52,17 +62,14 @@ static int parse_input(char *input, message_format *msg) {
         char input_copy[MAX_MSG_LEN];
         strcpy(input_copy, input); 
         char *token = strtok(input_copy, " ");
-        //  printf("Токен: %s.\n", token);
         if (strcmp(token, "upload") == 0) { 
             char *filename = strtok(NULL, " ");
             struct stat st;
 
             if (stat(filename, &st) == 0) {
-                // printf("Файл существует.\n");
-                // printf("Размер файла: %ld байт\n", st.st_size);
                 sprintf(input, "upload %ld %s", st.st_size, filename);
             } else {
-                // printf("Файл %s недоступен.\n", filename);
+
                 return 1;
             }
         }
@@ -108,135 +115,170 @@ void *console_input_thread(void *arg) {
     return NULL;
 }
 
-// static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reason,
-                            //   void *user, void *in, size_t len) {
-//     // Получаем указатель на структуру, которую LWS автоматически выделил под это соединение
-//     struct http_client_session *pss = (struct http_client_session *)user;
+// Callback-обработчик событий HTTP-клиента
+static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reason,
+                                void *user, void *in, size_t len) {
+    (void)user;
 
-//     switch (reason) {
-        
-//         // 1. Готовим HTTP-заголовки нижнего уровня перед отправкой запроса
-//         case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
-//             unsigned char **p = (unsigned char **)in;
-//             *end = (*p) + len;
-            
-//             // Добавляем Content-Type с границей Multipart формы
-//             if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE, 
-//                 (unsigned char *)"multipart/form-data; boundary=" BOUNDARY, 44, p, end)) {
-//                 return -1;
-//             }
-            
-//             // Вычисляем и добавляем Content-Length общего HTTP-тела
-//             size_t total_length = pss->header_len + pss->file_size + pss->footer_len;
-//             char cl_str[32];
-//             int cl_len = sprintf(cl_str, "%zu", total_length);
-            
-//             if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH, 
-//                 (unsigned char *)cl_str, cl_len, p, end)) {
-//                 return -1;
-//             }
-//             break;
-//         }
+    client_file_upload_data *upload = (client_file_upload_data *)lws_wsi_user(wsi);
+    
+    // Буфер для отправки данных (обязательно резервируем LWS_PRE в начале и в конце)
+    uint8_t buf[LWS_PRE + CHUNK_SIZE + LWS_PRE];
+    uint8_t *p = &buf[LWS_PRE];
+    char log_message[LOG_MESSAGE_LEN];
+    char timestamp[20];
+    time_t now = time(NULL);
+    struct tm *local = localtime(&now); 
+    strftime(timestamp, sizeof timestamp, "%Y-%m-%d %H:%M:%S", local);
 
-//         // 2. Главное событие: Сеть готова принимать куски данных (HTTP-Body)
-//         case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE: {
-//             if (!pss || !pss->fp) break;
+    switch (reason) {
+         case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
+            // LWS передает указатель на указатель текущей позиции в буфере заголовков
+            unsigned char **p = (unsigned char **)in;
+            unsigned char *end = (*p) + len - 1; // Конец доступного буфера
 
-//             // Выделяем буфер с обязательным отступом LWS_PRE
-//             unsigned char buffer[LWS_PRE + CHUNK_SIZE];
-//             unsigned char *p = &buffer[LWS_PRE];
-//             size_t write_len = 0;
+            // 1. Добавляем заголовок Content-Length
+            char len_str[32];
+            int len_str_len = snprintf(len_str, sizeof(len_str), "%zu", upload->total_size);
             
-//             // Флаги по умолчанию для потоковой передачи HTTP
-//             int flags = lws_write_ws_flags(LWS_WRITE_HTTP, 0, 0);
+            if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH, 
+                                             (unsigned char *)len_str, len_str_len, p, end)) {
+                sprintf(log_message, "%s Не удалось добавить заголовок Content-Length\n", timestamp);
+                write_to_log(log_message, logs_dir);    
+                return -1;
+            }
 
-//             // ШАГ А: Отправляем стартовую Multipart-структуру (имя файла, тип)
-//             if (pss->state == 0) {
-//                 write_len = pss->header_len;
-//                 memcpy(p, pss->body_header, write_len);
+            // 2. Добавляем заголовок Content-Type
+            if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE, 
+                                             (unsigned char *)"application/octet-stream", 24, p, end)) {
+                sprintf(log_message, "%s Не удалось добавить заголовок Content-Type\n", timestamp);
+                write_to_log(log_message, logs_dir);    
+                return -1;
+            }
+
+            //необходимо пнуть lws для того, чтобы была начата отправка данных 
+            lws_client_http_body_pending(wsi, 1); 
+            lws_callback_on_writable(wsi); 
+            return 0;
+        }
+
+        case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE:
+            if (!upload || !upload->fp) return -1;
+
+
+            // 1. Читаем очередной кусок файла с диска
+            size_t n = fread(p, 1, CHUNK_SIZE, upload->fp);
+            if (n > 0) {
+                upload->sent_size += n;
                 
-//                 pss->state = 1; // В следующий раз перейдем к отправке самого файла
-//                 flags |= LWS_WRITE_NO_FIN; // Говорим LWS, что поток тела НЕ окончен
-//             }
-            
-//             // ШАГ Б: Читаем файл кусками с диска и пушим в сеть
-//             else if (pss->state == 1) {
-//                 size_t read_bytes = fread(p, 1, CHUNK_SIZE, pss->fp);
-//                 if (read_bytes > 0) {
-//                     write_len = read_bytes;
-//                     pss->sent_bytes += read_bytes;
-//                     lwsl_user("[HTTP Клиент] Отправлено: %zu / %zu байт\n", pss->sent_bytes, pss->file_size);
-//                     flags |= LWS_WRITE_NO_FIN; // Поток продолжается
-//                 } else {
-//                     // Файл закончился, переключаемся на закрывающий Boundary
-//                     pss->state = 2;
-//                     lws_callback_on_writable(wsi); // Сразу запрашиваем новый такт записи
-//                     break;
-//                 }
-//             }
-            
-//             // ШАГ В: Отправляем финальный хвост Multipart-формы
-//             else if (pss->state == 2) {
-//                 write_len = pss->footer_len;
-//                 memcpy(p, pss->body_footer, write_len);
+                // Проверяем, последний ли это чанк
+                int is_last = (upload->sent_size >= upload->total_size || feof(upload->fp));
                 
-//                 pss->state = 3; // Все шаги выполнены
-//                 // Флаг LWS_WRITE_NO_FIN убран — это финализирует HTTP POST запрос наружу
-//             }
+                // Формируем флаги отправки HTTP-тела
+                enum lws_write_protocol flags = lws_write_ws_flags(
+                    LWS_WRITE_HTTP, 
+                    upload->sent_size == n, // Посылаем ли мы самый первый кусок?
+                    is_last                 // Посылаем ли мы финальный кусок?
+                );
 
-//             // Записываем собранный буфер в сокет
-//             if (write_len > 0) {
-//                 int n = lws_write(wsi, p, write_len, flags);
-//                 if (n < 0) {
-//                     lwsl_err("[HTTP Клиент] Ошибка записи lws_write\n");
-//                     return -1;
-//                 }
-//             }
+                // 2. Отправляем кусок в сеть
+                if (lws_write(wsi, p, n, flags) < 0) {
+                    sprintf(log_message, "%s Ошибка отправки файла %s на сервер\n", timestamp, upload->filename);
+                    printf("%s", log_message);
+                    write_to_log(log_message, logs_dir);    
+                    return -1;
+                }
 
-//             // Если передача еще продолжается, просим LWS вызвать нас снова
-//             if (pss->state < 3) {
-//                 lws_callback_on_writable(wsi);
-//             }
-//             break;
-//         }
+                // Если файл не закончился, просим LWS вызвать нас снова, как только сеть освободится
+                if (!is_last) {
+                    lws_callback_on_writable(wsi);
+                } else {
+                    sprintf(log_message, "%s Файл %s полностью передан в сеть! Ожидаем ответ 200 OK...\n", timestamp, upload->filename);
+                    printf("%s", log_message);
+                    write_to_log(log_message, logs_dir);
+                }
+            }
+            break;
 
-//         // 3. Сервер принял данные и прислал ответ (например, "OK" или статус 200)
-//         case LWS_CALLBACK_RECEIVE_CLIENT_HTTP: {
-//             char response_chunk[256];
-//             size_t max_len = (len < sizeof(response_chunk) - 1) ? len : sizeof(response_chunk) - 1;
-//             memcpy(response_chunk, in, max_len);
-//             response_chunk[max_len] = '\0';
-            
-//             lwsl_user("[HTTP Клиент] Ответ сервера: %s\n", response_chunk);
-//             break;
-//         }
+        case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP: {
+            // Данный колбэк вызывается, когда заголовки POST-запроса успешно отправлены.
+            // Запрашиваем первый вызов writable для отправки тела файла.
+            lws_callback_on_writable(wsi);
+            break;
+        }
 
-//         // 4. Запрос успешно и полностью завершен
-//         case LWS_CALLBACK_COMPLETED_CLIENT_HTTP:
-//             lwsl_user("[HTTP Клиент] Файл успешно передан, HTTP сессия закрыта.\n");
-//             if (pss && pss->fp) {
-//                 fclose(pss->fp);
-//                 pss->fp = NULL;
-//             }
-//             break;
+        case LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ:
+            // Сюда придет ответ от сервера (например, тело ответа 200 OK)
+            // Мы можем его вывести или проигнорировать
+            break;
 
-//         // 5. Обработка обрывов связи / аварийного закрытия сокета
-//         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-//         case LWS_CALLBACK_CLOSED_CLIENT_HTTP:
-//             if (pss && pss->fp) {
-//                 fclose(pss->fp);
-//                 pss->fp = NULL;
-//                 lwsl_warn("[HTTP Клиент] Соединение прервано, файл закрыт.\n");
-//             }
-//             break;
+        case LWS_CALLBACK_RECEIVE_CLIENT_HTTP: {
+            // Сервер прислал финальный статус (например, 200 OK)
+            unsigned int status = lws_http_client_http_response(wsi);
+            snprintf(log_message, LOG_MESSAGE_LEN, "%s Файл %s Сервер ответил HTTP статусом: %u.\n", timestamp, upload->filename, status);
+            printf("%s", log_message);
+            write_to_log(log_message, logs_dir);
+            return -1; // Возвращаем -1, чтобы закрыть это HTTP-соединение, так как задача выполнена
+        }
 
-//         default:
-//             break;
-//     }
-//     return lws_callback_http_dummy(wsi, reason, user, in, len);
-// }
+        case LWS_CALLBACK_CLIENT_HTTP_DROP_PROTOCOL:
+            // Очистка ресурсов при закрытии соединения
+            if (upload) {
+                if (upload->fp) fclose(upload->fp);
+                free(upload);
+            }
+            break;
 
-// Callback-обработчик событий клиента
+        default:
+            break;
+    }
+    return 0;
+}
+
+// Триггер callback-обработчика событий http-клиента
+void start_http_upload(struct lws_context *context, const char *server_ip, int port, 
+                       const char *upload_path, const char *local_filepath) {
+    
+    // 1. Открываем файл и замеряем его размер
+    FILE *fp = fopen(local_filepath, "rb");
+    if (!fp) {
+        return;
+    }
+    
+    fseek(fp, 0, SEEK_END);
+    size_t file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    // 2. Выделяем структуру для отслеживания прогресса
+    client_file_upload_data *upload_status = malloc(sizeof(client_file_upload_data));
+    upload_status->fp = fp;
+    upload_status->total_size = file_size;
+    upload_status->sent_size = 0;
+    strcpy(upload_status->filename, local_filepath);
+
+    // 3. Конфигурируем HTTP POST запрос
+    struct lws_client_connect_info info = {0};
+    
+    info.context = context;
+    info.address = server_ip;
+    info.port = port;
+    info.path = upload_path; // Передаем полученный с сервера путь, например "/upload_status/550e8400..."
+    info.host = info.address;
+    info.origin = info.address;
+    info.method = "POST";
+    info.protocol = "http_file_tranfer-protocol"; // Протокол LWS для HTTP-запросов (задан в массиве структур lws_protocols)
+    info.userdata = upload_status; // Привязываем данные файла к wsi-сессии
+
+    // 4. Инициируем асинхронное подключение
+    struct lws *wsi = lws_client_connect_via_info(&info);
+    if (!wsi) {
+        // lwsl_err("Не удалось инициировать HTTP подключение к серверу\n");
+        fclose(fp);
+        free(upload_status);
+    }
+}
+
+// Callback-обработчик событий вебсокет-клиента
 static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reason,
                                 void *user, void *in, size_t len) {
     (void)user;
@@ -258,17 +300,9 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
             }
             
             message_format *msg = (message_format *)in;
-            if (msg->type == FILE_UPLOAD_ACK) {
-                
-                
-            }
-        
-
             struct tm *local = localtime(&msg->time_created); 
-            
             char log_message[LOG_MESSAGE_LEN];
             char timestamp[20];
-            //check fort date modfied
             strftime(timestamp, sizeof timestamp,
                 "%Y-%m-%d %H:%M:%S", local);
             snprintf(log_message, LOG_MESSAGE_LEN, "%s %s {%s} [%s] для [%s]: %s\n",
@@ -284,7 +318,25 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
                     msg->time_deleted > 0 ? "" : msg->text);
             printf("%s", log_message);
             write_to_log(log_message, logs_dir);
-
+            
+            if (msg->type == FILE_UPLOAD_ACK) {
+                char url[50];
+                char filename[MAX_FILENAME_LEN];
+                char *token = strtok(msg->text, "|");
+                if (token != NULL) {
+                    strcpy(url, token + 4);
+                } else {         
+                    return 0;
+                }
+                token = strtok(NULL, ":");
+                if (token != NULL) {
+                    strcpy(filename, token + strlen(token) + 1);
+                } else {
+                    return 0;
+                }
+                start_http_upload(lws_get_context(wsi), server_address, server_port, url, filename);
+                break;       
+            }
             break;
         }
         // 3. Сокет готов отправить данные в сеть
@@ -321,15 +373,15 @@ static int callback_chat_client(struct lws *wsi, enum lws_callback_reasons reaso
 
 // Регистрация протокола (имя должно строго совпадать с серверным)
 static struct lws_protocols protocols[] = {
-    // {
-    //     .name = "http_file_tranfer-protocol",
-    //     .callback = callback_http_client,
-    //     .per_session_data_size = sizeof(http_client_session),
-    //     .rx_buffer_size = 4096,                            
-    //     .id = 0,                                           
-    //     .user = NULL,
-    //     .tx_packet_size = 0  
-    // },
+    {
+        .name = "http_file_tranfer-protocol",
+        .callback = callback_http_client,
+        .per_session_data_size = sizeof(http_client_session),
+        .rx_buffer_size = 4096,                            
+        .id = 0,                                           
+        .user = NULL,
+        .tx_packet_size = 0  
+    },
     {
         .name = "chat-protocol",
         .callback = callback_chat_client,
@@ -356,14 +408,12 @@ int main(int argc, char **argv) {
     struct lws_context *context;
     struct lws_client_connect_info ccinfo;
     pthread_t input_th;
-    const char *server_address = SERVER_IP; // IP сервера по умолчанию
-    int server_port = SERVER_PORT; // Порт по умолчанию
     int opt;
 
     while ((opt = getopt(argc, argv, "s:p:d:h")) != -1) {
         switch (opt) {
             case 's':
-                server_address = optarg;
+                strcpy(server_address, optarg);
                 break;
             case 'p':
                 server_port = atoi(optarg);
@@ -388,7 +438,6 @@ int main(int argc, char **argv) {
 
 
     pthread_mutex_init(&lock_tx, NULL);
-
     // Настройка контекста клиента
     memset(&info, 0, sizeof(info));
     info.port = CONTEXT_PORT_NO_LISTEN; // Клиент не слушает порты
@@ -411,9 +460,9 @@ int main(int argc, char **argv) {
     ccinfo.path = "/";
     ccinfo.host = ccinfo.address;
     ccinfo.origin = ccinfo.address;
-    ccinfo.protocol = protocols[0].name; // "chat-protocol"
+    ccinfo.protocol = protocols[1].name; // "chat-protocol"
     ccinfo.client_exts = extensions; 
-
+   
     // Инициируем подключение
     if (!lws_client_connect_via_info(&ccinfo)) {
         fprintf(stderr, "Ошибка инициализации подключения\n");
@@ -427,7 +476,7 @@ int main(int argc, char **argv) {
         lws_context_destroy(context);
         return 1;
     }
-
+   
     // Главный цикл обработки сетевых событий
     while (!force_exit) {
         // Опрашиваем события сети каждые 50 мс
