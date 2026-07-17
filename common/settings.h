@@ -4,9 +4,11 @@
 #define MAX_CLIENTS 100
 #define MAX_MSG_LEN 1024
 #define MAX_NAME_LEN 128
+#define MAX_FILENAME_LEN 260
 #define MAX_MESSAGES_STORED 256 
 #define MAX_GROUP_NAME_LEN MAX_NAME_LEN
 #define GUID_LEN 36
+#define MAX_FILE_SIZE ((long long)(10 * 1024 * 1024))
 #define MSG_TEMPLATE "yyyy-MM-dd hh:mm:ss {} [] для []: \n"
 #define LOG_MESSAGE_LEN strlen(MSG_TEMPLATE) + GUID_LEN + MAX_NAME_LEN + MAX_GROUP_NAME_LEN + MAX_MSG_LEN + GUID_LEN + 1
 #define MAX_GROUPS 16

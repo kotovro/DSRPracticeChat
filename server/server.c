@@ -24,6 +24,7 @@ struct server_storage {
 
 static struct server_storage chat_server;
 static char logs_dir[512] = "/tmp/chat_server/";
+// static char files_dir[512] = "/tmp/chat_server/";
 
 static pthread_mutex_t lock_tx;
 static int force_exit = 0;
@@ -161,10 +162,8 @@ void group_message(group_data* group_info, message_format *message, client_data 
 void route_message(message_format *message, client_data *source, client_data *exclude) {
     bool is_from_server = strcmp(message->source, SERVER_NAME) == 0; 
     if (strcmp(message->destination, GLOBAL_CHAT_NAME) == 0) {
-        printf("%s", "will try broadcast \n");
         user_data *user = is_from_server ? NULL : get_user_by_id(source->user_id);
         if (is_from_server || (source->user_id > 0 && user != NULL && !user->is_global_chat_banned)) {
-            printf("%s", "will do broadcast \n");
             broadcast_message(message, exclude);
         }
         return;
@@ -194,6 +193,135 @@ void server_log(char *server_signal) {
     write_to_log(server_signal, logs_dir);
     printf("%s", server_signal);        
 }
+
+// // Функция-триггер: она вызываеися из WebSocket коллбэка, когда пришла команда upload
+// int trigger_file_upload(struct lws_context *ctx, const char *filepath, int target_msg_id) {
+//     char log_message[LOG_MESSAGE_LEN];
+//     FILE *fp = fopen(filepath, "rb");
+//     if (!fp) {
+//         snprintf(log_message, LOG_MESSAGE_LEN, "Не удалось открыть файл для загрузки: %s\n", filepath);
+//         server_log(log_message);
+//         return -1;
+//     }
+
+//     // Измеряем файл
+//     fseek(fp, 0, SEEK_END);
+//     size_t fsize = ftell(fp);
+//     fseek(fp, 0, SEEK_SET);
+
+//     struct lws_client_connect_info ccinfo;
+//     memset(&ccinfo, 0, sizeof(ccinfo));
+    
+//     ccinfo.context = ctx;
+//     ccinfo.address = "127.0.0.1";
+//     ccinfo.port = 8080;
+//     ccinfo.ssl_connection = 0;
+//     ccinfo.path = "/upload";
+//     ccinfo.host = ccinfo.address;
+//     ccinfo.origin = ccinfo.address;
+//     ccinfo.method = "POST";
+    
+//     ccinfo.protocol = "http_file_tranfer-protocol"; 
+
+//     // Создаем асинхронное HTTP-соединение
+//     struct lws *http_wsi = lws_client_connect_via_info(&ccinfo);
+//     if (!http_wsi) {
+//         snprintf(log_message, LOG_MESSAGE_LEN, "Ошибка создания асинхронного HTTP-соединения\n");
+//         server_log(log_message);
+//         fclose(fp);
+//         return -1;
+//     }
+
+//     // Достаем автоматически выделенную структуру и заполняем её
+//     struct http_client_session *pss = (struct http_client_session *)lws_wsi_user(http_wsi);
+//     if (pss) {
+//         pss->fp = fp;
+//         pss->file_size = fsize;
+//         pss->sent_bytes = 0;
+//         pss->msg_id = target_msg_id; // Привязали ID сообщения из чата!
+//         pss->state = 0;
+//     }
+
+//     // Сразу запрашиваем у LWS событие на запись для этого HTTP-соединения
+//     lws_callback_on_writable(http_wsi);
+    
+//     snprintf(log_message, LOG_MESSAGE_LEN, "Асинхронная загрузка файла %s запущена параллельно с чатом.\n", filepath);
+//     server_log(log_message);
+//     return 0;
+// }
+
+// static int callback_http_file(struct lws *wsi, enum lws_callback_reasons reason,
+//                               void *user, void *in, size_t len) {
+//     // struct file_upload_session *pss = (struct file_upload_session *)user;
+//     // char log_message[LOG_MESSAGE_LEN];
+//     // switch (reason) {
+//     //     case LWS_CALLBACK_HTTP_BODY: {
+//     //         if (!pss) break;
+
+//     //         // Сюда прилетают сырые куски HTTP-тела (включая multipart обертку)
+//     //         // Примечание: Для продакшена здесь используется lws_spa (парсер multipart формы).
+//     //         // Для простоты примера мы просто пишем входящий бинарный поток в файл.
+//     //         if (!pss->dest_fp) {
+//     //             char path[256];
+//     //             snprintf(path, sizeof(path), "server_received_%ld.dat", (long)wsi);
+//     //             pss->dest_fp = fopen(path, "wb");
+//     //             if (!pss->dest_fp) {
+                    
+//     //                 snprintf(log_message, M("Не удалось создать файл на сервере.\n");
+//     //                 return -1;
+//     //             }
+//     //             lwsl_user("[HTTP] Создан файл для приема: %s\n", path);
+//     //         }
+
+//     //         if (pss->dest_fp && len > 0) {
+//     //             fwrite(in, 1, len, pss->dest_fp);
+//     //             pss->received_bytes += len;
+//     //             lwsl_user("[HTTP] Принято чанком: %zu байт (Всего: %zu)\n", len, pss->received_bytes);
+//     //         }
+//     //         break;
+//     //     }
+
+//     //     case LWS_CALLBACK_HTTP_BODY_COMPLETION:
+//     //         lwsl_user("[HTTP] Загрузка файла полностью завершена!\n");
+//     //         if (pss && pss->dest_fp) {
+//     //             fclose(pss->dest_fp);
+//     //             pss->dest_fp = NULL;
+//     //         }
+            
+//     //         // Отправляем клиенту HTTP-ответ "200 OK"
+//     //         unsigned char buffer[LWS_PRE + 256];
+//     //         unsigned char *p = &buffer[LWS_PRE];
+//     //         unsigned char *end = &buffer[sizeof(buffer) - 1];
+            
+//     //         if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end) ||
+//     //             lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE, (unsigned char *)"text/plain", 10, &p, end) ||
+//     //             lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH, (unsigned char *)"2", 1, &p, end) ||
+//     //             lws_finalize_http_header(wsi, &p, end)) {
+//     //             return -1;
+//     //         }
+            
+//     //         *p++ = 'O'; *p++ = 'K'; // Тело ответа
+//     //         lws_write(wsi, &buffer[LWS_PRE], p - &buffer[LWS_PRE], LWS_WRITE_HTTP);
+            
+//     //         // Переводим сокет в режим закрытия со стороны HTTP
+//     //         if (lws_http_transaction_completed(wsi)) return -1;
+//     //         break;
+
+//     //     case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
+//     //         // Безопасная очистка ресурсов, если клиент резко оборвал связь
+//     //         if (pss && pss->dest_fp) {
+//     //             fclose(pss->dest_fp);
+//     //             pss->dest_fp = NULL;
+//     //             lwsl_user("[HTTP] Соединение разорвано, файл закрыт.\n");
+//     //         }
+//     //         break;
+
+//     //     default:
+//     //         break;
+//     // }
+//     // // Для стандартных HTTP запросов (например GET /), если они не обрабатываются в BODY
+//     // return lws_callback_http_dummy(wsi, reason, user, in, len);
+// }
 
 // Главный обработчик событий (Callback) для протокола чата
 static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
@@ -398,12 +526,21 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
 
 // Определение поддерживаемых протоколов
 static struct lws_protocols protocols[] = {
+    // {
+    //     .name = "http_file_tranfer-protocol",
+    //     .callback = callback_http_client,
+    //     .per_session_data_size = sizeof(http_client_session),
+    //     .rx_buffer_size = 4096,                            
+    //     .id = 0,                                           
+    //     .user = NULL,
+    //     .tx_packet_size = 0  
+    // },
     { 
         .name = "chat-protocol", 
         .callback = callback_chat, 
         .per_session_data_size = sizeof(struct client_data), 
         .rx_buffer_size = sizeof(message_format), // Размер буфера приема равен размеру структуры сообщения
-        .id = 0,               // Явно инициализируем ID протокола
+        .id = 1,               // Явно инициализируем ID протокола
         .user = NULL,          // Дополнительный указатель пользователя
         .tx_packet_size = 0    // Размер пакета отправки по умолчанию
     },

@@ -25,9 +25,6 @@ user_storage.o: user_storage.c
 group_storage.o: group_storage.c
 	$(CC) $(CFLAGS) -c group_storage.c
 
-# delete_all_messages.o: delete_all_messages.c
-# 	$(CC) $(CFLAGS) -c delete_all_messages.c -o delete_all_messages.o
-
 message_storage.o: message_storage.c
 	$(CC) $(CFLAGS) -c message_storage.c
 

@@ -9,7 +9,8 @@
 typedef enum {
     TEXT,
     COMMAND,
-    LOGIN_SUCCESS
+    LOGIN_SUCCESS, 
+    FILE_UPLOAD_ACK
 } message_type;
 
 typedef struct message_format {
@@ -23,6 +24,13 @@ typedef struct message_format {
     time_t time_deleted;
 } message_format;
 
+typedef struct http_client_session {
+    int has_pending_upload;
+    char pending_token[GUID_LEN + 1];
+    char pending_filename[MAX_FILENAME_LEN];
+    long long pending_filesize;
+} http_client_session;
+
 typedef struct network_message {
     char network_prefix[LWS_PRE];
     message_format message;
@@ -32,6 +40,10 @@ typedef struct network_message {
 typedef struct client_data {
     struct lws *wsi;
     int user_id;
+    char pending_filename[MAX_FILENAME_LEN];
+    long long pending_filesize;
+    char pending_token[GUID_LEN + 1];
+    bool has_pending_upload;
 
     // Очередь исходящих сообщений для этого конкретного клиента
     int first_message;

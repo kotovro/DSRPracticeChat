@@ -129,32 +129,6 @@ message_format try_execute_command(const char *command, const char *destination,
         memcpy(&msg, msg_to_delete, sizeof(message_format));
         strcpy(msg.text, "Сообщение удалено.");
         return msg;
-    // } else if (strcmp(token, "delete_all") == 0) {
-    //     token = strtok(NULL, " ");
-    //     if (token == NULL) {
-    //         snprintf(msg.text, sizeof(msg.text), "Формат команды: /delete_all <имя пользовтеля/название группы>.");
-    //         strcpy(msg.destination, get_user_by_id(client->user_id)->username);
-    //         return msg;
-    //     } 
-    //     message_format *msg_to_delete = get_message_by_id(token);
-    //     if (msg_to_delete == NULL) {
-    //         printf("we couldn't find the message");
-    //         snprintf(msg.text, sizeof(msg.text), "Сообщение с guid %s невозомжно удалить.", token);
-    //         strcpy(msg.destination, get_user_by_id(client->user_id)->username);
-    //         return msg;
-    //     }
-    //     int editor_id = client->user_id;
-    //     if (get_user_by_id(editor_id)->is_moderator) {
-    //         snprintf(msg.text, sizeof(msg.text), "У Вас недостаточно прав для удаления данного сообщения.");
-    //         strcpy(msg.destination, get_user_by_id(client->user_id)->username);
-    //         return msg;
-    //     }
-
-    //     delete_message(msg_to_delete);
-    //     strcpy(msg.destination, msg_to_delete->destination);
-    //     strcpy(msg.text, msg_to_delete->destination);
-    //     memcpy(&msg, msg_to_delete, sizeof(message_format));
-    // 
     } else if (strcmp(token, "ban") == 0) {
         token = strtok(NULL, " ");
         if (token == NULL) {
@@ -189,6 +163,58 @@ message_format try_execute_command(const char *command, const char *destination,
         } 
         snprintf(msg.text, sizeof(msg.text), "Модератор запретил писать в [%s] пользователю [%s].", destination, token);
         return msg;
+    } else if (strcmp(token, "upload") == 0) {
+        int error_type = 0;
+        long long filesize;
+        strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+
+        token = strtok(NULL, " ");
+        if (token == NULL) {
+            error_type = 1;
+        } else {
+            char *end;
+            errno = 0;
+            filesize = strtoll(token, &end, 10);
+            if (end == token) {
+                error_type = 1;
+            } else if (*end != '\0') {
+                error_type = 1;
+            } else if (errno == ERANGE) {
+                error_type = 2;
+            } else if (filesize > MAX_FILE_SIZE) {
+                error_type = 2;
+            } else if (filesize <= 0) {
+                error_type = 3;
+            }
+        }
+        if (error_type == 0) {
+            if (strlen(command) == strlen("upload ") + strlen(token) || strtok(NULL, " ") == NULL) {
+                error_type = 1;
+            }
+        }
+        if (error_type == 0) {
+            msg.type = FILE_UPLOAD_ACK;
+            strcpy(client->pending_filename, command + strlen("upload ") + strlen(token) + 1);
+            client->pending_filesize = filesize;
+            strcpy(client->pending_token, msg.message_guid);
+            client->has_pending_upload = true;
+            sprintf(msg.text, "upload/%s", msg.message_guid);
+            return msg;
+        } 
+        if (error_type == 1) {
+            strcpy(msg.text, "Формат комманды: [<получатель>] /upload <имя файла>.");
+            return msg;
+        }
+
+        if (error_type == 2) {
+            sprintf(msg.text, "Максимальный размер файла для загрузки: %lldМб, размер Вашего файла: %lldМб", MAX_FILE_SIZE / 1024 / 1024, filesize / 1024 / 1024);
+            return msg;    
+        }
+        
+        if (error_type == 3) {
+            strcpy(msg.text, "Невозможно загрузить пустой файл");
+            return msg;
+        }
     } else {
         // Если команда не распознана, возвращаем текстовое сообщение
         strncpy(msg.text, command, sizeof(msg.text) - 1);

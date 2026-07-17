@@ -22,7 +22,6 @@ static void commit() {
     for (int i = 0; i < last_index; i++) {
         fprintf(fptr, "Type:%d\nDestination:%s\nSource:%s\nGUID:%s\nTime created:%ld\nTime modified:%ld\nTime deleted:%ld\nText:%s\n",  
             messages[i].type, messages[i].destination, messages[i].source, messages[i].message_guid, messages[i].time_created, messages[i].time_modified, messages[i].time_deleted, messages[i].text);
-            printf("GUID is: %s, time deleted is %ld", messages[i].message_guid, messages[i].time_deleted);
     } 
 
     fclose(fptr);
@@ -76,7 +75,6 @@ void edit_message_text(message_format *msg_to_edit, char *new_text) {
 
 void delete_message(message_format *msg_to_delete) {
     msg_to_delete->time_deleted = time(NULL);
-    printf("delte message %s", msg_to_delete->message_guid);
     commit();
 }
 
@@ -96,7 +94,6 @@ int init_message_storage() {
     
     while (fgets(line, sizeof(line), fptr) != NULL ) {
         line[strcspn(line, "\n")] = '\0';
-        printf("%s, %d \n", line, messages_count);
         char copy[MAX_MSG_LEN + 6];
         strcpy(copy, line);
         char *token = strtok(copy, ":"); 

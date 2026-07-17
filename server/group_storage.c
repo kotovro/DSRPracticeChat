@@ -108,7 +108,6 @@ int init_group_storage() {
     int current_banned_index = 0;
     while (fgets(line, sizeof(line), fptr) != NULL ) {
         line[strcspn(line, "\n")] = '\0';
-        printf("%s, %d \n", line, groups_count);
         char copy[MAX_MSG_LEN + 6];
         strcpy(copy, line);
         char *token = strtok(copy, ":"); 
