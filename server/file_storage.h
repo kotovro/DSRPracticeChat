@@ -19,5 +19,6 @@ void add_file_mapping(char *systemfilename, char *clientfilename, char *source, 
 void update_file_mapping(char *systemfilename, char *sharedfilename);
 int create_file(char *system_filename, FILE **file_pointer);
 bool file_mapping_exsts(char *name);
+int init_file_storage();
 
 #endif //FILE_STORAGE_H

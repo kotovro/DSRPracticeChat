@@ -271,17 +271,23 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
         case LWS_CALLBACK_HTTP_BODY_COMPLETION:
             // 5. Все байты файла успешно получены
             if (pss->is_upload && pss->fp) {
+                printf("%s\n", "do we enter here?");
                 fclose(pss->fp);
                 pss->fp = NULL;
                 sprintf(log_message, "Загрузка файла %s полностью завершена!\n", pss->file_guid);
                 server_log(log_message);
+                printf("%s\n", "will try get fie mapping");
                 file_name_mapping *file_mapping = get_file_by_localname(pss->file_guid);
+                printf("%s\n", "got file maping");
                 if (file_mapping != NULL) {
+                    printf("%s\n", "here's file mapping after if");
                     int user_id = find_user_by_name(file_mapping->source);
+                    printf("%s\n", "user id");
                     if (user_id > 0) {
                         for (int i = 0; i < chat_server.client_count; i++) {
                             if (chat_server.clients[i]->user_id == user_id) {
                                 message_format message = {0};
+                                printf("%s\n", "ffff");
                                 message.type = FILE_UPLOAD_ANNOUNCE;
                                 strcpy(message.source, file_mapping->source);
                                 strcpy(message.destination, file_mapping->destination); 
@@ -332,7 +338,6 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
     struct client_data *vhd = (struct client_data *)user;
     char log_message[LOG_MESSAGE_LEN];        
 
-    printf("resoan is %d\n", reason);
     switch (reason) {
         
         // 1. Клиент успешно подключился
@@ -568,6 +573,10 @@ int main(int argc, char **argv) {
     int groups = init_group_storage();
     snprintf(log_message, LOG_MESSAGE_LEN, "Хранищище групп проинциализировано. В нем %d групп\n", groups);
     server_log(log_message);
+    int files = init_file_storage();
+    snprintf(log_message, LOG_MESSAGE_LEN, "Хранищище файлов проинциализировано. В нем %d файлов\n", files);
+    server_log(log_message);
+    
 
     struct lws_context_creation_info info;
     struct lws_context *context;
