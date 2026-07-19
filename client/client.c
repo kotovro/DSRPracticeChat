@@ -150,6 +150,7 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
 
     switch (reason) {
          case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
+            if (session_data->request_type == POST) {
             // LWS передает указатель на указатель текущей позиции в буфере заголовков
             unsigned char **p = (unsigned char **)in;
             unsigned char *end = (*p) + len - 1; // Конец доступного буфера
@@ -177,6 +178,8 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
             lws_client_http_body_pending(wsi, 1); 
             lws_callback_on_writable(wsi); 
             return 0;
+            }
+            break;
         }
 
         case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE:
@@ -226,6 +229,7 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
                 // Запрашиваем первый вызов writable для отправки тела файла.
                 lws_callback_on_writable(wsi);
             } else if (session_data->request_type == GET) {
+                printf("%s\n", "Do we enter GET processing on client?");
                 // Узнаем, какой размер файла нам обещает сервер
                 char len_buf[32];
                 if (lws_hdr_copy(wsi, len_buf, sizeof(len_buf), WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0) {
@@ -256,7 +260,6 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
                     return -1;
                 }
                 session_data->processed_bytes += len;
-                
                 // Выводим прогресс в консоль
                 if (session_data->total_size > 0) {
                     printf("Прогресс: %.2f%%\r", ((double)session_data->processed_bytes / session_data->total_size) * 100.0);
@@ -265,17 +268,28 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
             break;
 
         case LWS_CALLBACK_RECEIVE_CLIENT_HTTP: {
-            // Сервер прислал финальный статус (например, 200 OK)
             unsigned int status = lws_http_client_http_response(wsi);
-            snprintf(log_message, LOG_MESSAGE_LEN, "%s Файл %s Сервер ответил HTTP статусом: %u.\n", timestamp, session_data->filename, status);
-            printf("%s", log_message);
-            write_to_log(log_message, logs_dir);
-            return -1; // Возвращаем -1, чтобы закрыть это HTTP-соединение, так как задача выполнена
+            if (session_data->request_type == POST) {
+                // Сервер прислал финальный статус (например, 200 OK)
+                snprintf(log_message, LOG_MESSAGE_LEN, "%s Файл %s Сервер ответил HTTP статусом: %u.\n", timestamp, session_data->filename, status);
+                write_to_log(log_message, logs_dir);
+                return -1; // Возвращаем -1, чтобы закрыть это HTTP-соединение, так как задача выполнена
+            } else if (session_data->request_type == GET) {
+                
+                char buffer[CHUNK_SIZE + LWS_PRE];
+                char *px = buffer + LWS_PRE;
+                int lenx = sizeof(buffer) - LWS_PRE;
+
+                if (lws_http_client_read(wsi, &px, &lenx) < 0) {
+                    return -1;
+                }
+            }
+            break;
         }
 
         case LWS_CALLBACK_CLOSED_CLIENT_HTTP: 
        
-            if (session_data == NULL || session_data->request_type != GET) {
+            if (session_data == NULL) {
                 break;
             }
 
@@ -283,11 +297,13 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
                 fclose(session_data->fp);
             }
                 
-            if (session_data->processed_bytes == session_data->total_size && session_data->total_size > 0) {
-                printf("\nФайл успешно скачан и сохранен в %s\n", session_data->filename);
-            } else {
-                printf("\nОшибка: скачивание прервано. Получено только %zu из %zu байт\n", 
-                    session_data->processed_bytes, session_data->total_size);
+            if (session_data->request_type == GET) {
+                if (session_data->processed_bytes == session_data->total_size && session_data->total_size > 0) {
+                    printf("\nФайл успешно скачан и сохранен в %s\n", session_data->filename);
+                } else {
+                    printf("\nОшибка: скачивание прервано. Получено только %zu из %zu байт\n", 
+                        session_data->processed_bytes, session_data->total_size);
+                }
             }
                 
             // Освобождаем память структуры, выделенную в start_http_download
@@ -295,11 +311,11 @@ static int callback_http_client(struct lws *wsi, enum lws_callback_reasons reaso
             break;
 
         case LWS_CALLBACK_CLIENT_HTTP_DROP_PROTOCOL:
-            // Очистка ресурсов при закрытии соединения
-            if (session_data != NULL) {
-                if (session_data->fp) fclose(session_data->fp);
-                free(session_data);
-            }
+            // // Очистка ресурсов при закрытии соединения
+            // if (session_data != NULL) {
+            //     if (session_data->fp) fclose(session_data->fp);
+            //     free(session_data);
+            // }
             break;
 
         default:
@@ -375,7 +391,7 @@ int start_http_download(struct lws_context *context, const char *server_ip, int 
     info.host = server_ip;
     
     info.method = "GET";   // скачивание идет через GET
-    info.protocol = NULL;  // NULL для чистого HTTP
+    info.protocol = "http_file_tranfer-protocol";  // NULL для чистого HTTP
     info.ssl_connection = 0;
 
     // Привязываем нашу структуру к сессии этого сокета
@@ -545,6 +561,7 @@ int main(int argc, char **argv) {
     pthread_t input_th;
     int opt;
 
+    // lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, NULL);
     while ((opt = getopt(argc, argv, "s:p:d:h")) != -1) {
         switch (opt) {
             case 's':
@@ -597,6 +614,8 @@ int main(int argc, char **argv) {
     ccinfo.origin = ccinfo.address;
     ccinfo.protocol = protocols[1].name; // "chat-protocol"
     ccinfo.client_exts = extensions; 
+
+
    
     // Инициируем подключение
     if (!lws_client_connect_via_info(&ccinfo)) {

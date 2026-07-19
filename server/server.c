@@ -221,15 +221,24 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
     strftime(timestamp, sizeof timestamp, "%Y-%m-%d %H:%M:%S", local);
     char log_message[LOG_MESSAGE_LEN];        
 
+    printf("reason is %d\n", reason);
     switch (reason) {
         case LWS_CALLBACK_HTTP: {
-            char uri[128];
-            if (lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_HTTP_URI_ARGS) < 0) {
-                sprintf(log_message, "Некорректный url %s в запросе", uri);
-                server_log(log_message);
+            char *uri_ptr = NULL;
+            int uri_len = 0;
+
+            // Функция сама вернет метод (GET/POST) и выставит указатель прямо на строку пути внутри wsi
+            int method_idx = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
+            
+            if (method_idx < 0 || !uri_ptr || uri_len >= 128) {
                 lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
-                return 1; 
+                return 1;
             }
+
+            // Копируем в локальный буфер, так как регулярке нужна строка с нуль-терминатором
+            char uri[128];
+            memcpy(uri, uri_ptr, uri_len);
+            uri[uri_len] = '\0';
 
             regex_t regex = {0};
             regmatch_t matches[3]; // matches[0] - весь URL, matches[1] - только группа с GUID
@@ -240,18 +249,18 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
 
             int regex_error = regcomp(&regex, pattern, REG_EXTENDED);
             if (regex_error) {
-                sprintf(log_message, "Ошибка компляции regex, код %d", regex_error);
+                sprintf(log_message, "Ошибка компляции regex, код %d\n", regex_error);
                 server_log(log_message);
                 lws_return_http_status(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, NULL);
                 return 1;
             }
 
-            int reg_res = regexec(&regex, uri, 2, matches, 0);
+            int reg_res = regexec(&regex, uri, 3, matches, 0);
             regfree(&regex); // Обязательно освобождаем память регулярки, чтобы не было утечек!
 
             if (reg_res != 0) {
                 // Если URL не подошел под паттерн (не тот префикс, или GUID не равен 36 символам)
-                sprintf(log_message, "Некорректный url %s в запросе", uri);
+                sprintf(log_message, "Некорректный url %s в запросе\n", uri);
                 server_log(log_message);
                 lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, "Invalid URL structure");
                 return 1;
@@ -263,7 +272,7 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
             pss->file_guid[GUID_LEN] = '\0';
 
             // 1. Проверяем, что это POST запрос
-            if (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI)) {
+            if (method_idx == WSI_TOKEN_POST_URI) {
                 // 2. Извлекаем URI (например, "/upload/550e8400-e29b-41d4-a716-446655440000")
                 sprintf(log_message, "Получен HTTP POST запрос на URI: %s\n", uri);
                 server_log(log_message);
@@ -278,18 +287,17 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
                     int err = create_file(pss->file_guid, &pss->fp);
                     if (err) {
                         lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
-                        sprintf(log_message, "Ошибка создания файла, код ошибки %d", err);
+                        sprintf(log_message, "Ошибка создания файла, код ошибки %d\n", err);
                         server_log(log_message);
                         return -1;    
                     } 
                     sprintf(log_message, "Файл %s успешно создан. Ожидаем поток данных...\n", pss->file_guid);
                     server_log(log_message);
                 }
-                
-            } else if (lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI)) {
+            } else if (method_idx == WSI_TOKEN_GET_URI) {
                 int error = open_shared_file(pss->file_guid, &pss->fp);
                 if (error) {     
-                    sprintf(log_message, "Невозможно открыть файл с guid %s, код ошибки: %d", pss->file_guid, error);
+                    sprintf(log_message, "Невозможно открыть файл с guid %s, код ошибки: %d\n", pss->file_guid, error);
                     server_log(log_message);
                     lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, "File not found");
                     return 1;
@@ -335,6 +343,7 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
         }
 
         case LWS_CALLBACK_HTTP_WRITEABLE: {
+            printf("%s", "we are in writeble http\n");
             if (pss == NULL || pss->fp == NULL ) return 0;
 
             unsigned char buffer[4096 + LWS_PRE];
@@ -358,21 +367,22 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
                     sprintf(log_message, "Файл %s полностью отправлен", pss->file_guid);
                     server_log(log_message);
                     // Финализируем HTTP-транзакцию
-                    if (lws_http_transaction_completed(wsi)) return -1;
+                    // if (lws_http_transaction_completed(wsi)) return -1;
+                    return -1;
                 }
             } else {
                 // Конец файла или ошибка чтения
                 fclose(pss->fp);
                 pss->fp = NULL;
-                if (lws_http_transaction_completed(wsi)) return -1;
+                // / if (lws_http_transaction_completed(wsi)) return -1;
+                return -1;
             }
-            return 0;
+            break;
         }
-
-
 
         case LWS_CALLBACK_HTTP_BODY:
             // 4. Срабатывает неблокирующе по мере прихода порций байтов из сети
+            printf("lws reason is: %d\n", reason);
             if (pss->is_upload && pss->fp && len > 0) {
                 size_t written = fwrite(in, 1, len, pss->fp);
                 if (written < len) {
@@ -405,6 +415,7 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
                                 generate_uuid(message.message_guid);
                                 update_file_mapping(pss->file_guid, message.message_guid);
                                 sprintf(message.text, "Пользователь поделился файлом %s", file_mapping->clientname);
+                                message.time_created = time(NULL);
                                 route_message(message, chat_server.clients[i], NULL);
                                 break;
                             }

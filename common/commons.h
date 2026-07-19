@@ -11,8 +11,8 @@ typedef enum {
     COMMAND,
     LOGIN_SUCCESS, 
     FILE_UPLOAD_ACK,
-    FILE_DOWNLOAD_ACK,
-    FILE_UPLOAD_ANNOUNCE
+    FILE_UPLOAD_ANNOUNCE,
+    FILE_DOWNLOAD_ACK
 } message_type;
 
 typedef enum {

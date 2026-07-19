@@ -1,6 +1,7 @@
 CC = gcc
 CFLAGS += -Wall -Wextra -Werror -Wpedantic
 CFLAGS += -O3
+CFLAGS += -g3
 CFLAGS += -I../common
 # CFLAGS += -I../utils/cJSON
 CFLAGS += -I../utils/
@@ -8,7 +9,7 @@ LDLIBS = -lwebsockets
 LDLIBS += -lpthread
 BUILD_DIR ?= build
 
-server: | build server build/server.o build/client_login.o build/utils.o build/parser.o build/server_utils.o build/user_storage.o build/group_storage.o build/message_storage.o build/file_storage.o
+server : build build/server.o build/client_login.o build/utils.o build/parser.o build/server_utils.o build/user_storage.o build/group_storage.o build/message_storage.o build/file_storage.o 
 	$(CC) $(CFLAGS) -o server \
 		build/server.o \
 		build/client_login.o \
