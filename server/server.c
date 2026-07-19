@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+#include <regex.h>
 #include "settings.h"
 #include "commons.h"
 #include "client_login.h"
@@ -34,6 +35,8 @@ typedef struct {
     FILE *fp;
     char file_guid[GUID_LEN + 1];
     int is_upload;
+    size_t processed_bytes;
+    size_t file_size;
 }  per_session_data__http;
 
 
@@ -220,32 +223,109 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
 
     switch (reason) {
         case LWS_CALLBACK_HTTP: {
-            // 1. Проверяем, что это POST запрос
-            if (!lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI)) {
-                lws_return_http_status(wsi, HTTP_STATUS_METHOD_NOT_ALLOWED, NULL);
-                return -1;
+            char uri[128];
+            if (lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_HTTP_URI_ARGS) < 0) {
+                sprintf(log_message, "Некорректный url %s в запросе", uri);
+                server_log(log_message);
+                lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
+                return 1; 
             }
 
-            // 2. Извлекаем URI (например, "/upload/550e8400-e29b-41d4-a716-446655440000")
-            const char *uri = (const char *)in;
-            sprintf(log_message, "Получен HTTP POST запрос на URI: %s\n", uri);
-            server_log(log_message);
+            regex_t regex = {0};
+            regmatch_t matches[3]; // matches[0] - весь URL, matches[1] - только группа с GUID
+            
+            // Паттерн: строка начинается с /upload/ или /download/, затем идет группа из 36 символов (буквы, цифры, дефис)
+            char pattern[64];
+            sprintf(pattern, "^/(upload|download)/([0-9a-zA-Z-]{%d})$", GUID_LEN);
 
-            // Проверяем формат URI и парсим GUID
-            // Формат парсинга ожидает ровно 36 символов GUID (буквы, цифры и дефисы)
-            
-            if (sscanf(uri, "/upload/%36[0-9a-zA-Z-]", pss->file_guid) == 1 && 
-                strlen(pss->file_guid) == 36 && file_mapping_exsts(pss->file_guid)) {
-                pss->is_upload = 1;
-            
-                // 3. Формируем имя файла на диске сервера
-                int err = create_file(pss->file_guid, &pss->fp);
-                if (err) {
-                    lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
-                    return -1;    
-                } 
-                sprintf(log_message, "Файл %s успешно создан. Ожидаем поток данных...\n", pss->file_guid);
+            int regex_error = regcomp(&regex, pattern, REG_EXTENDED);
+            if (regex_error) {
+                sprintf(log_message, "Ошибка компляции regex, код %d", regex_error);
                 server_log(log_message);
+                lws_return_http_status(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, NULL);
+                return 1;
+            }
+
+            int reg_res = regexec(&regex, uri, 2, matches, 0);
+            regfree(&regex); // Обязательно освобождаем память регулярки, чтобы не было утечек!
+
+            if (reg_res != 0) {
+                // Если URL не подошел под паттерн (не тот префикс, или GUID не равен 36 символам)
+                sprintf(log_message, "Некорректный url %s в запросе", uri);
+                server_log(log_message);
+                lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, "Invalid URL structure");
+                return 1;
+            }
+
+            // Извлекаем GUID из подстроки (захваченная группа находится в matches[2])
+            int guid_start = matches[2].rm_so;
+            memcpy(pss->file_guid, uri + guid_start, GUID_LEN);
+            pss->file_guid[GUID_LEN] = '\0';
+
+            // 1. Проверяем, что это POST запрос
+            if (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI)) {
+                // 2. Извлекаем URI (например, "/upload/550e8400-e29b-41d4-a716-446655440000")
+                sprintf(log_message, "Получен HTTP POST запрос на URI: %s\n", uri);
+                server_log(log_message);
+
+                // Проверяем формат URI и парсим GUID
+                // Формат парсинга ожидает ровно 36 символов GUID (буквы, цифры и дефисы)
+                
+                if (file_mapping_exsts(pss->file_guid)) {
+                    pss->is_upload = 1;
+                
+                    // 3. Формируем имя файла на диске сервера
+                    int err = create_file(pss->file_guid, &pss->fp);
+                    if (err) {
+                        lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
+                        sprintf(log_message, "Ошибка создания файла, код ошибки %d", err);
+                        server_log(log_message);
+                        return -1;    
+                    } 
+                    sprintf(log_message, "Файл %s успешно создан. Ожидаем поток данных...\n", pss->file_guid);
+                    server_log(log_message);
+                }
+                
+            } else if (lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI)) {
+                int error = open_shared_file(pss->file_guid, &pss->fp);
+                if (error) {     
+                    sprintf(log_message, "Невозможно открыть файл с guid %s, код ошибки: %d", pss->file_guid, error);
+                    server_log(log_message);
+                    lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, "File not found");
+                    return 1;
+                }
+
+                fseek(pss->fp, 0, SEEK_END);
+                pss->file_size = ftell(pss->fp);
+                fseek(pss->fp, 0, SEEK_SET);
+
+                unsigned char buffer[1024 + LWS_PRE];
+                unsigned char *p = buffer + LWS_PRE;
+                unsigned char *end = buffer + sizeof(buffer) - 1;
+
+                // Заполняем базовые HTTP-заголовки. 
+                // Четвертый аргумент (pss->file_size) автоматически превратится в заголовок Content-Length: XXXXX
+                if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/octet-stream", 
+                                                pss->file_size, &p, end)) {
+                    fclose(pss->fp);
+                    return 1; // Ошибка формирования заголовков
+                }
+
+                // Ставим финальный маркер конца заголовков (\r\n\r\n)
+                // Функция сдвинет указатель `p` еще на 4 байта вперед
+                if (lws_finalize_http_header(wsi, &p, end)) {
+                    fclose(pss->fp);
+                    return 1;
+                }
+ 
+                if (lws_write(wsi, buffer + LWS_PRE, p - (buffer + LWS_PRE), LWS_WRITE_HTTP_HEADERS) < 0) {
+                    fclose(pss->fp);
+                    return -1;
+                }
+
+                lws_callback_on_writable(wsi);
+                return 0; 
+                        
             } else {
                 // Неверный формат URL или отсутствует GUID
                 lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
@@ -253,6 +333,43 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
             }
             break;
         }
+
+        case LWS_CALLBACK_HTTP_WRITEABLE: {
+            if (pss == NULL || pss->fp == NULL ) return 0;
+
+            unsigned char buffer[4096 + LWS_PRE];
+            unsigned char *start = &buffer[LWS_PRE];
+
+            // Читаем кусок файла с диска
+            int bytes_read = fread(buffer, 1, 4096, pss->fp);
+            if (bytes_read > 0) {
+                int n = lws_write(wsi, start, bytes_read, LWS_WRITE_HTTP);
+                if (n < 0) return -1; // Ошибка сети
+
+                pss->processed_bytes += bytes_read;
+                // Если файл еще не кончился, запрашиваем следующий колбэк на запись
+                if (pss->processed_bytes < pss->file_size) {
+                    lws_callback_on_writable(wsi);
+                } else {
+                    // Файл полностью отправлен
+                    fclose(pss->fp);
+                    pss->fp = NULL;
+                    
+                    sprintf(log_message, "Файл %s полностью отправлен", pss->file_guid);
+                    server_log(log_message);
+                    // Финализируем HTTP-транзакцию
+                    if (lws_http_transaction_completed(wsi)) return -1;
+                }
+            } else {
+                // Конец файла или ошибка чтения
+                fclose(pss->fp);
+                pss->fp = NULL;
+                if (lws_http_transaction_completed(wsi)) return -1;
+            }
+            return 0;
+        }
+
+
 
         case LWS_CALLBACK_HTTP_BODY:
             // 4. Срабатывает неблокирующе по мере прихода порций байтов из сети
@@ -271,23 +388,17 @@ static int callback_http_server(struct lws *wsi, enum lws_callback_reasons reaso
         case LWS_CALLBACK_HTTP_BODY_COMPLETION:
             // 5. Все байты файла успешно получены
             if (pss->is_upload && pss->fp) {
-                printf("%s\n", "do we enter here?");
                 fclose(pss->fp);
                 pss->fp = NULL;
                 sprintf(log_message, "Загрузка файла %s полностью завершена!\n", pss->file_guid);
                 server_log(log_message);
-                printf("%s\n", "will try get fie mapping");
                 file_name_mapping *file_mapping = get_file_by_localname(pss->file_guid);
-                printf("%s\n", "got file maping");
                 if (file_mapping != NULL) {
-                    printf("%s\n", "here's file mapping after if");
                     int user_id = find_user_by_name(file_mapping->source);
-                    printf("%s\n", "user id");
                     if (user_id > 0) {
                         for (int i = 0; i < chat_server.client_count; i++) {
                             if (chat_server.clients[i]->user_id == user_id) {
                                 message_format message = {0};
-                                printf("%s\n", "ffff");
                                 message.type = FILE_UPLOAD_ANNOUNCE;
                                 strcpy(message.source, file_mapping->source);
                                 strcpy(message.destination, file_mapping->destination); 

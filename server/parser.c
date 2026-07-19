@@ -152,7 +152,6 @@ message_format try_execute_command(const char *command, const char *destination,
             change_user_global_ban(user_to_ban_id, true);
             strcpy(msg.source, get_user_by_id(client->user_id)->username);
             strcpy(msg.destination, token);
-            //возможно, стиоит отсылать сообщение и забаненому ползьвателю о том. тчо его заблокировали
         } else {
             int group_id = find_group_by_name(destination); 
             if (group_id < 0) {
@@ -216,6 +215,34 @@ message_format try_execute_command(const char *command, const char *destination,
         if (error_type == 3) {
             strcpy(msg.text, "Невозможно загрузить пустой файл");
             return msg;
+        }
+    } else if (strcmp(token, "download") == 0) {
+        int error_type = 0;
+        file_name_mapping *file = NULL;
+        strcpy(msg.destination, get_user_by_id(client->user_id)->username);
+    
+        token = strtok(NULL, " ");
+        if (token == NULL) {
+            error_type = 1;
+        } else {
+            file = get_file_by_sharedname(token);
+            if (file == NULL) {
+                error_type = 2;
+            }
+        }
+        if (error_type == 0) {
+            msg.type = FILE_DOWNLOAD_ACK;
+            sprintf(msg.text, "url:/download/%s|file:%s", file->sharedname, file->clientname);
+            return msg;
+        } 
+        if (error_type == 1) {
+            strcpy(msg.text, "Формат комманды: /download <guid файла>.");
+            return msg;
+        }
+
+        if (error_type == 2) {
+            sprintf(msg.text, "Файл %s не найден", token);
+            return msg;    
         }
     } else {
         // Если команда не распознана, возвращаем текстовое сообщение

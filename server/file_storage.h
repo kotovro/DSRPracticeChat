@@ -15,8 +15,9 @@ typedef struct {
 
 file_name_mapping *get_file_by_localname(char *name);
 file_name_mapping *get_file_by_sharedname(char *name);
-void add_file_mapping(char *systemfilename, char *clientfilename, char *source, const char *destination);
-void update_file_mapping(char *systemfilename, char *sharedfilename);
+int open_shared_file(char *shared_filename, FILE **file_pointer);
+void add_file_mapping(char *system_filename, char *client_filename, char *source, const char *destination);
+void update_file_mapping(char *system_filename, char *shared_filename);
 int create_file(char *system_filename, FILE **file_pointer);
 bool file_mapping_exsts(char *name);
 int init_file_storage();

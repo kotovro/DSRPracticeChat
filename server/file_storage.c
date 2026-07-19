@@ -33,7 +33,6 @@ file_name_mapping *get_file_by_localname(char *name) {
         if (strcmp(files[i].localname, name) == 0) {
             return files + i;        
         }
-
     }
     return NULL;
 }
@@ -46,6 +45,20 @@ file_name_mapping *get_file_by_sharedname(char *name) {
         }
     }
     return NULL;
+}
+
+int open_shared_file(char *shared_filename, FILE **file_pointer) {
+    file_name_mapping *shared_file = get_file_by_sharedname(shared_filename);
+    if (shared_file == NULL) {
+        return 1;
+    }
+    char full_filename[MAX_FILENAME_LEN];
+    sprintf(full_filename, "%s%s", FILE_STORAGE_PATH, shared_file->localname);
+    *file_pointer = fopen(full_filename, "rb");
+    if (*file_pointer == NULL) {
+        return -1;
+    }
+    return 0;
 }
 
 void get_filename_from_path(char *path, char *filename) {

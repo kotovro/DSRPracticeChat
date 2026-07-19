@@ -11,8 +11,14 @@ typedef enum {
     COMMAND,
     LOGIN_SUCCESS, 
     FILE_UPLOAD_ACK,
+    FILE_DOWNLOAD_ACK,
     FILE_UPLOAD_ANNOUNCE
 } message_type;
+
+typedef enum {
+    POST,
+    GET
+} http_request_type;
 
 typedef struct message_format {
     message_type type; // либо просто сообщение с текстом, либо команда с аргументами 
@@ -24,13 +30,6 @@ typedef struct message_format {
     time_t time_modified;
     time_t time_deleted;
 } message_format;
-
-typedef struct http_client_session {
-    int has_pending_upload;
-    char pending_token[GUID_LEN + 1];
-    char pending_filename[MAX_FILENAME_LEN];
-    long long pending_filesize;
-} http_client_session;
 
 typedef struct network_message {
     char network_prefix[LWS_PRE];
