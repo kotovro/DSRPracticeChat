@@ -1,14 +1,17 @@
-.PHONY: all client server clean
+.PHONY: all client server test clean
 
 TEST_FILES := $(wildcard tests/*.sh)
+
+# Проброс DEBUG в подпроекты: make DEBUG=1
+DEBUG ?= 0
 
 all: client server test
 
 client:
-	$(MAKE) -C client
+	$(MAKE) -C client DEBUG=$(DEBUG)
 
 server:
-	$(MAKE) -C server
+	$(MAKE) -C server DEBUG=$(DEBUG)
 
 test: $(TEST_FILES)
 	@fail=0; \
